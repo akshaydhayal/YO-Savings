@@ -1,0 +1,54 @@
+YO SDK Hackathon: Project Ideas
+Based on a deep dive into the YO Protocol SDK and React documentation, here are several project ideas categorized by the hackathon judging criteria.
+
+1. "Yo-Savings" Mobile-First PWA
+Goal: The best consumer savings experience (UX Simplicity).
+
+Concept: A sleek, mobile-optimized web app that feels like a premium fintech product (e.g., Revolut or Robinhood).
+Key Features:
+One-Click Deposit: Simple UI for depositing USDC, ETH, or WBTC into YO vaults.
+Visual Yield Tracking: Interactive charts showing 7d APY and TVL history using useVaultHistory.
+Instant/Queued Status: Clear indicators of whether a redemption is instant or queued, managing user expectations.
+Technical Integration: @yo-protocol/react (useDeposit, useVaultHistory, useVaultSnapshot).
+2. "Yo-Agent" - AI Yield Strategist
+Goal: Innovative interaction and growth potential (Creativity).
+
+Concept: An AI companion (chat interface) that helps users manage their on-chain savings.
+Key Features:
+Yield Comparison: "Which chain has the best yield for USD right now?" (fetching snapshots across Base, Eth, Arb).
+Goal Tracking: "Help me save $5,000 for a car." The agent tracks progress and suggests the best vaults.
+Portfolio Analysis: Explain realized vs. unrealized P&L in simple terms using getUserPerformance.
+Technical Integration: @yo-protocol/core, LLM integration, and multi-chain YoClient.
+3. "Yo-Treasury" - Multi-Sig Enterprise Savings
+Goal: Professional-grade risk management and trust.
+
+Concept: A specialized dashboard for DAO treasuries and organizations using Safe (formerly Gnosis Safe).
+Key Features:
+Safe Batching: Use the SDK's prepareX pattern to batch approval + deposit into a single Safe transaction.
+Merkl Reward Dashboard: Professional view of claimable rewards across the organization's positions.
+Transparency Reports: Exportable data on yield performance and transaction history (getUserHistory).
+Technical Integration: @yo-protocol/core (PreparedTransaction pattern), Safe SDK.
+4. "Yo-Growth" - Gamified Yield Leaderboard
+Goal: User adoption and engagement.
+
+Concept: A social savings platform where users compete for the best "Yield Score."
+Key Features:
+Real-time Leaderboard: Displaying weekly and all-time top savers using the useLeaderboard hook.
+Yield Badges: Dynamic NFTs or badges awarded for "Consistent Saving" or "Top 10% APY."
+Social Proof: Simple "Share my yield" cards for X/LinkedIn.
+Technical Integration: @yo-protocol/react (useLeaderboard, useUserPerformance).
+5. "Yo-Gift" - On-chain Savings Gift Cards
+Goal: Creativity and Frictionless Onboarding.
+
+Concept: "Gift a future" by sending yield-bearing positions to friends or family.
+Key Features:
+Gifting Flow: Sender deposits USDC into a YO vault → Recipient gets a link/NFT to claim the position.
+Wrapped Savings: The gift continues to earn yield while waiting to be claimed.
+Technical Integration: @yo-protocol/core (deposit to a specific recipient address), simple frontend for the "unwrapping" experience.
+Judging Alignment
+Idea	UX Simplicity	Creativity	Integration	Risk & Trust
+Yo-Savings	⭐⭐⭐	⭐	⭐⭐	⭐⭐
+Yo-Agent	⭐⭐	⭐⭐⭐	⭐⭐	⭐
+Yo-Treasury	⭐	⭐⭐	⭐⭐⭐	⭐⭐⭐
+Yo-Growth	⭐⭐	⭐⭐	⭐⭐	⭐
+Yo-Gift	⭐⭐⭐	⭐⭐⭐	⭐	⭐
