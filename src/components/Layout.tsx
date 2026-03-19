@@ -35,7 +35,7 @@ export default function Layout({ children }: { children: ReactNode }) {
             <div style={{ width: 32, height: 32, borderRadius: 10, background: '#d6ff34', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 0 16px rgba(214,255,52,0.2)' }}>
               <Zap size={18} color="#05070A" />
             </div>
-            <span style={{ fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em' }}>YoEarn</span>
+            <span style={{ fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em' }}>YoVest</span>
           </Link>
 
           {/* Desktop nav */}
