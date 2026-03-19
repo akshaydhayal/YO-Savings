@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { Gift, Send, Loader2, CheckCircle2, Info } from 'lucide-react'
-import { useAccount, useChainId, useSendTransaction, useConfig } from 'wagmi'
+import { useAccount, useChainId, useSendTransaction, useConfig, useEnsAddress } from 'wagmi'
+import { mainnet } from 'wagmi/chains'
 import { useVaults, useYoClient } from '@yo-protocol/react'
 import { parseTokenAmount, VAULTS } from '@yo-protocol/core'
 import { waitForTransactionReceipt } from '@wagmi/core'
@@ -19,7 +20,7 @@ export default function GiftPage() {
   const { address } = useAccount()
   const chainId = useChainId()
   const config = useConfig()
-  const { vaults } = useVaults()
+  const { vaults, isLoading: vaultsLoading } = useVaults()
   const client = useYoClient()
   const { sendTransactionAsync } = useSendTransaction()
   
@@ -31,17 +32,70 @@ export default function GiftPage() {
   const [isSending, setIsSending] = useState(false)
   const [success, setSuccess] = useState(false)
   const [error, setError] = useState('')
-  const [step, setStep] = useState<'idle' | 'approving' | 'depositing' | 'saving'>('idle')
+  const [step, setStep] = useState<'idle' | 'resolving' | 'approving' | 'depositing' | 'saving'>('idle')
+
+  // Resolve Base Name / ENS if needed
+  const { data: resolvedAddress, isLoading: resolving } = useEnsAddress({
+    name: (recipient.includes('.') && !recipient.endsWith('.base')) ? recipient : undefined,
+    chainId: mainnet.id // ENS is on Mainnet
+  })
+
+  // Note: Base names (.base) might need a specific resolver if not synced to ENS.
+  // For now, we assume if it's a 0x address, we use it directly.
+  // If it's a name, we try to resolve it.
+  const finalRecipient = useMemo(() => {
+    if (recipient.startsWith('0x')) return recipient
+    return resolvedAddress || recipient
+  }, [recipient, resolvedAddress])
 
   const selectedVault = useMemo(() => {
     if (!vaults) return null
-    const targetAddr = VAULTS[vaultId as keyof typeof VAULTS]?.address?.[chainId ?? 8453]
-    return vaults.find((v: any) => (v.contracts?.vaultAddress || v.address)?.toLowerCase() === targetAddr?.toLowerCase())
+    const vaultConfig = (VAULTS as any)[vaultId]
+    const targetAddr = vaultConfig?.address
+    
+    if (!targetAddr) {
+        console.warn(`No target address found for vault ${vaultId}`, vaultConfig)
+        return null
+    }
+
+    // Try to find by address (case-insensitive)
+    const match = vaults.find((v: any) => {
+        const addr = (v.contracts?.vaultAddress || v.address)?.toLowerCase()
+        return addr === targetAddr.toLowerCase()
+    })
+    
+    // Fallback: Try to find by ID or symbol if address match fails
+    if (!match) {
+        return vaults.find((v: any) => 
+            v.id === vaultId || 
+            v.symbol === vaultId || 
+            v.name?.includes(vaultId.replace('yo', ''))
+        )
+    }
+    
+    return match
   }, [vaults, vaultId, chainId])
 
   const handleSendGift = async () => {
-    if (!address || !recipient || !amount || !client || !selectedVault) return
+    console.log('Sending gift...', { address, recipient, amount, hasClient: !!client, selectedVault: !!selectedVault })
     
+    if (!address) { setError('Please connect your wallet'); return }
+    
+    // Validation
+    const isAmountValid = !isNaN(parseFloat(amount)) && parseFloat(amount) > 0
+    const isRecipientValid = recipient.length >= 42 || recipient.includes('.')
+    
+    if (!isRecipientValid) { setError('Please enter a valid wallet address or Base Name (.base)'); return }
+    if (!isAmountValid) { setError('Please enter a valid amount greater than 0'); return }
+    if (!client) { setError(`Yo Protocol Client not ready (Network: ${chainId ?? 'Unknown'}). Please check your connection.`); return }
+    if (!selectedVault) { setError(`Vault ${vaultId.replace('yo','')} not supported on the current network (${chainId ?? 8453}). Please switch to Base Mainnet.`); return }
+
+    const targetRecipient = finalRecipient
+    if (!targetRecipient.startsWith('0x')) {
+        setError('Could not resolve recipient name to a valid address. Please use a wallet address.');
+        return
+    }
+
     setIsSending(true)
     setError('')
     try {
@@ -59,7 +113,7 @@ export default function GiftPage() {
         token: tokenAddr,
         amount: amountRaw,
         owner: address as `0x${string}`,
-        recipient: recipient as `0x${string}`,
+        recipient: targetRecipient as `0x${string}`,
         chainId: chainId ?? 8453
       })
 
@@ -106,7 +160,6 @@ export default function GiftPage() {
     }
   }
 
-  const isValid = recipient.length >= 42 && !isNaN(parseFloat(amount)) && parseFloat(amount) > 0
 
   return (
     <div style={{ maxWidth: 640, margin: '0 auto', padding: '0 16px' }}>
@@ -223,13 +276,13 @@ export default function GiftPage() {
             {/* CTA */}
             <button
               onClick={handleSendGift}
-              disabled={!isValid || isSending}
+              disabled={isSending || vaultsLoading || resolving}
               style={{ 
-                width: '100%', padding: '18px', borderRadius: 16, background: isValid ? '#d6ff34' : 'rgba(255,255,255,0.05)', color: '#000', fontSize: 15, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: isValid ? 'pointer' : 'not-allowed', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, transition: 'all 0.2s' 
+                width: '100%', padding: '18px', borderRadius: 16, background: '#d6ff34', color: '#000', fontSize: 15, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: (isSending || vaultsLoading || resolving) ? 'not-allowed' : 'pointer', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, transition: 'all 0.2s', opacity: (isSending || vaultsLoading || resolving) ? 0.6 : 1
               }}
             >
-              {isSending ? <Loader2 className="animate-spin" size={20} /> : <Send size={18} />}
-              {isSending ? step.charAt(0).toUpperCase() + step.slice(1) + '...' : 'Send Yo-Gift'}
+              {isSending || vaultsLoading || resolving ? <Loader2 className="animate-spin" size={20} /> : <Send size={18} />}
+              {resolving ? 'Resolving Name...' : vaultsLoading ? 'Loading Vaults...' : isSending ? step.charAt(0).toUpperCase() + step.slice(1) + '...' : 'Send Yo-Gift'}
             </button>
 
           </div>
