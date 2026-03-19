@@ -14,17 +14,13 @@ const PERIODS = ['Daily', 'Weekly', 'Monthly'] as const
 type Period = (typeof PERIODS)[number]
 
 interface SIPGoal {
+  _id?: string
+  userAddress: string
   vaultId: string
   amount: string
   period: Period
   createdAt: number
 }
-
-const STORAGE_KEY = 'yo_sip_goals'
-const loadGoals = (): SIPGoal[] => {
-  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]') } catch { return [] }
-}
-const saveGoals = (g: SIPGoal[]) => localStorage.setItem(STORAGE_KEY, JSON.stringify(g))
 
 function isDue(goal: SIPGoal): boolean {
   const ms = { Daily: 86_400_000, Weekly: 604_800_000, Monthly: 2_592_000_000 }[goal.period]
@@ -107,29 +103,73 @@ function FL({ children }: { children: React.ReactNode }) {
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 export default function SIPPage() {
-  const { isConnected } = useAccount()
-  const [goals, setGoals] = useState<SIPGoal[]>(loadGoals)
+  const { address, isConnected } = useAccount()
+  const [goals, setGoals] = useState<SIPGoal[]>([])
   const [form,  setForm]  = useState({ vaultId: Object.keys(VAULTS)[0] ?? 'yoUSD', amount: '', period: 'Weekly' as Period })
   const [busy,  setBusy]  = useState(false)
+  const [loading, setLoading] = useState(false)
+
+  // -- Load goals from MongoDB --
+  useEffect(() => {
+    if (isConnected && address) {
+      setLoading(true)
+      fetch(`/api/sip?userAddress=${address.toLowerCase()}`)
+        .then(res => res.json())
+        .then(res => {
+          if (res.success) setGoals(res.data)
+          setLoading(false)
+        })
+        .catch(() => setLoading(false))
+    }
+  }, [isConnected, address])
 
   const totalPerPeriod = goals.reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
   const dueCt          = goals.filter(isDue).length
 
-  const addGoal = () => {
+  const addGoal = async () => {
     const amt = parseFloat(form.amount)
-    if (!amt || amt <= 0) return
+    if (!amt || amt <= 0 || !address) return
     setBusy(true)
-    setTimeout(() => {
-      const updated = [...goals, { ...form, createdAt: Date.now() }]
-      setGoals(updated); saveGoals(updated)
-      setForm(f => ({ ...f, amount: '' }))
-      setBusy(false)
-    }, 500)
+    try {
+      const res = await fetch('/api/sip', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...form, userAddress: address.toLowerCase() })
+      })
+      const data = await res.json()
+      if (data.success) {
+        setGoals([...goals, data.data])
+        setForm(f => ({ ...f, amount: '' }))
+      }
+    } catch (e) {
+      console.error('Failed to add SIP goal:', e)
+    }
+    setBusy(false)
   }
 
-  const removeGoal = (idx: number) => {
-    const updated = goals.filter((_, i) => i !== idx)
-    setGoals(updated); saveGoals(updated)
+  const removeGoal = async (idx: number) => {
+    const goalToRemove = goals[idx]
+    if (!goalToRemove._id) return
+    try {
+      await fetch(`/api/sip?id=${goalToRemove._id}`, { method: 'DELETE' })
+      setGoals(goals.filter((_, i) => i !== idx))
+    } catch (e) {
+      console.error('Failed to remove SIP goal:', e)
+    }
+  }
+
+  const updateGoalTimestamp = async (idx: number) => {
+    const goalToUpdate = goals[idx]
+    if (!goalToUpdate._id) return
+    try {
+      const res = await fetch(`/api/sip?id=${goalToUpdate._id}`, { method: 'PUT' })
+      const data = await res.json()
+      if (data.success) {
+        setGoals(goals.map((g, i) => i === idx ? data.data : g))
+      }
+    } catch (e) {
+      console.error('Failed to update SIP goal:', e)
+    }
   }
 
   // ── Not connected ─────────────────────────────────────────────────────────
@@ -337,7 +377,13 @@ export default function SIPPage() {
 
         {/* Goals list */}
         <AnimatePresence mode="popLayout">
-          {goals.length > 0 && (
+          {loading && (
+            <div style={{ display:'flex', justifyContent:'center', padding:'40px 0' }}>
+              <Loader2 size={32} style={{ animation:'sipSpin 0.8s linear infinite', color:'rgba(255,255,255,0.2)' }} />
+            </div>
+          )}
+
+          {!loading && goals.length > 0 && (
             <motion.div key="list" initial={{ opacity:0 }} animate={{ opacity:1 }} exit={{ opacity:0 }}>
               <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14, padding:'0 2px' }}>
                 <span style={{ fontSize:10, fontWeight:600, color:'rgba(255,255,255,0.7)', textTransform:'uppercase', letterSpacing:'0.26em' }}>
@@ -356,10 +402,7 @@ export default function SIPPage() {
                       key={`${goal.vaultId}-${goal.createdAt}`}
                       goal={goal} vault={vault} due={due} index={i}
                       onRemove={() => removeGoal(i)}
-                      onExecuted={() => {
-                        const updated = goals.map((g, gi) => gi === i ? { ...g, createdAt:Date.now() } : g)
-                        setGoals(updated); saveGoals(updated)
-                      }}
+                      onExecuted={() => updateGoalTimestamp(i)}
                     />
                   )
                 })}
@@ -367,7 +410,7 @@ export default function SIPPage() {
             </motion.div>
           )}
 
-          {goals.length === 0 && (
+          {!loading && goals.length === 0 && (
             <motion.div
               key="empty"
               initial={{ opacity:0, y:10 }} animate={{ opacity:1, y:0 }} exit={{ opacity:0 }}
