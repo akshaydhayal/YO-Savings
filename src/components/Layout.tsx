@@ -3,13 +3,14 @@ import { useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { motion, AnimatePresence } from 'framer-motion'
-import { LayoutDashboard, Target, Zap, Menu, X, PieChart } from 'lucide-react'
+import { LayoutDashboard, Target, Zap, Menu, X, PieChart, Gift } from 'lucide-react'
 
 const NAV = [
   { href: '/', label: 'Vaults', icon: Zap },
-  { href: '/portfolios', label: 'Baskets', icon: PieChart },
   { href: '/dashboard', label: 'My Savings', icon: LayoutDashboard },
+  { href: '/portfolios', label: 'Portfolio Baskets', icon: PieChart },
   { href: '/sip', label: 'Smart SIP', icon: Target },
+  { href: '/gift', label: 'Yo-Gifts', icon: Gift },
 ]
 
 const F = "'Outfit', system-ui, sans-serif"

@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Zap, Shield, Flame, X, CheckCircle2, Loader2, Settings2 } from 'lucide-react'
-import { useAccount, useChainId } from 'wagmi'
+import { Zap, Shield, Flame, X, CheckCircle2, Loader2 } from 'lucide-react'
+import { useAccount, useChainId, useReadContract, useBalance, useWriteContract } from 'wagmi'
 import { useDeposit, usePrices } from '@yo-protocol/react'
 import { parseTokenAmount, VAULTS } from '@yo-protocol/core'
+import { erc20Abi, formatUnits } from 'viem'
 
 const F    = "'Outfit', system-ui, sans-serif"
 const FNUM = "'DM Mono', 'Fira Code', monospace"
@@ -11,35 +12,25 @@ const FNUM = "'DM Mono', 'Fira Code', monospace"
 const PROFILES = [
   {
     id: 'conservative', title: 'Conservative', icon: Shield, color: '#00FF8B',
-    desc: 'Low risk, stable yield. 100% yoUSD.',
-    allocations: [{ vaultId: 'yoUSD', pct: 100 }]
+    desc: 'Focus on stability. 90% yoUSD, 10% yoETH.',
+    allocations: [{ vaultId: 'yoUSD', pct: 90 }, { vaultId: 'yoETH', pct: 10 }]
   },
   {
     id: 'balanced', title: 'Balanced', icon: Zap, color: '#D6FF34',
-    desc: 'Moderate risk. 50% yoUSD, 25% yoETH, 25% yoBTC.',
-    allocations: [{ vaultId: 'yoUSD', pct: 50 }, { vaultId: 'yoETH', pct: 25 }, { vaultId: 'yoBTC', pct: 25 }]
+    desc: 'Perfect balance. 50% yoUSD, 50% yoETH.',
+    allocations: [{ vaultId: 'yoUSD', pct: 50 }, { vaultId: 'yoETH', pct: 50 }]
   },
   {
-    id: 'aggressive', title: 'Aggressive', icon: Flame, color: '#FF5E5E',
-    desc: 'Max growth. 60% yoETH, 40% yoBTC.',
-    allocations: [{ vaultId: 'yoETH', pct: 60 }, { vaultId: 'yoBTC', pct: 40 }]
-  },
-  {
-    id: 'custom', title: 'Custom Basket', icon: Settings2, color: '#4E6FFF',
-    desc: 'Build your own strategy. Pick any assets.',
-    allocations: [{ vaultId: 'yoUSD', pct: 100 }]
+    id: 'aggressive', title: 'Aggressive', icon: Flame, color: '#FF4D4D',
+    desc: 'High growth potential. 10% yoUSD, 90% yoETH.',
+    allocations: [{ vaultId: 'yoUSD', pct: 10 }, { vaultId: 'yoETH', pct: 90 }]
   }
 ]
 
 const SYMBOL_TO_CG: Record<string, string> = {
   'WETH': 'ethereum', 'ETH': 'ethereum',
-  'cbBTC': 'bitcoin', 'BTC': 'bitcoin',
-  'USDC': 'usd-coin', 'EURC': 'euro-coin',
+  'USDC': 'usd-coin'
 }
-const VAULT_COLORS: Record<string, string> = {
-  yoUSD: '#00FF8B', yoETH: '#627EEA', yoBTC: '#FFAF4F', yoEUR: '#4E6FFF'
-}
-
 export default function RiskPortfolios() {
   const [selectedProfile, setSelectedProfile] = useState<typeof PROFILES[0] | null>(null)
 
@@ -111,39 +102,67 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
   const { prices } = usePrices()
   const [totalStr, setTotalStr] = useState('')
   const [step, setStep] = useState(0) // 0: input, 1: executing, 2: success, -1: error
-  const [allocs, setAllocs] = useState<any[]>(profile.allocations)
-  const [isEditing, setIsEditing] = useState(profile.id === 'custom')
+  const [allocs] = useState<any[]>(profile.allocations)
+  const [payWith, setPayWith] = useState<'USDC' | 'ETH'>('USDC')
+  const { writeContractAsync } = useWriteContract()
+  
+  // Balance checks
+  const usdcAddress = VAULTS.yoUSD.underlying?.address?.[chainId ?? 8453] as `0x${string}`
+  const wethAddress = VAULTS.yoETH.underlying?.address?.[chainId ?? 8453] as `0x${string}`
+  const { data: ethBalance } = useBalance({ address })
+  const { data: usdcBalance } = useReadContract({ address: usdcAddress, abi: erc20Abi, functionName: 'balanceOf', args: address ? [address] : undefined })
+  const { data: wethBalance } = useReadContract({ address: wethAddress, abi: erc20Abi, functionName: 'balanceOf', args: address ? [address] : undefined })
 
   // Pre-generate deposit hooks for all potential vaults
-  const depUSD  = useDeposit({ vault: VAULTS.yoUSD.address as `0x${string}` })
-  const depETH  = useDeposit({ vault: VAULTS.yoETH.address as `0x${string}` })
-  const depBTC  = useDeposit({ vault: VAULTS.yoBTC.address as `0x${string}` })
-  const depEUR  = useDeposit({ vault: VAULTS.yoEUR.address as `0x${string}` })
+  // Increased slippage to 1000bps (10%) for diversifications to handle smaller swap sizes/price impact
+  const depUSD  = useDeposit({ vault: VAULTS.yoUSD.address as `0x${string}`, slippageBps: 1000 })
+  const depETH  = useDeposit({ vault: VAULTS.yoETH.address as `0x${string}`, slippageBps: 1000 })
 
-  const DEPOSIT_MAP: Record<string, any> = { yoUSD: depUSD, yoETH: depETH, yoBTC: depBTC, yoEUR: depEUR }
+  const DEPOSIT_MAP: Record<string, any> = { yoUSD: depUSD, yoETH: depETH }
 
   const handleDeposit = async () => {
-    if (!address || !totalStr || !prices) return
-    const amountNum = parseFloat(totalStr)
-    if (isNaN(amountNum) || amountNum <= 0) return
+    if (!address || !totalStr || !prices || !userHasBalance) return
+    const inputAmt = parseFloat(totalStr)
+    if (isNaN(inputAmt) || inputAmt <= 0) return
 
     setStep(1)
     try {
+      // 1. Determine Source Asset Details based on user selection
+      const sourceVaultId = payWith === 'USDC' ? 'yoUSD' : 'yoETH'
+      const sourceVault = VAULTS[sourceVaultId]
+      const sourceTokenAddr = (sourceVault.underlying?.address as any)?.[chainId ?? 8453] as `0x${string}`
+      const sourceDec = sourceVault.underlying?.decimals ?? 18
+      
+      const sourceCgId = payWith === 'USDC' ? 'usd-coin' : 'ethereum'
+      const sourcePrice = (prices as any)?.[sourceCgId] ?? 1
+
+      // 2. Handle Native ETH wrapping if needed
+      if (payWith === 'ETH') {
+        const requiredWeth = parseTokenAmount(requiredSourceAmount.toFixed(18), 18)
+        if ((wethBalance || 0n) < requiredWeth) {
+          const toWrap = requiredWeth - (wethBalance || 0n)
+          await writeContractAsync({
+            address: wethAddress,
+            abi: [{ name: 'deposit', type: 'function', stateMutability: 'payable', inputs: [], outputs: [] }],
+            functionName: 'deposit',
+            value: toWrap
+          })
+        }
+      }
+
       for (const a of allocs) {
         if (a.pct <= 0) continue
-        const splitUsd = (amountNum * a.pct) / 100
-        const vault = VAULTS[a.vaultId as keyof typeof VAULTS]
-        const symbol = vault.underlying?.symbol || ''
-        const cgId = SYMBOL_TO_CG[symbol] ?? symbol.toLowerCase()
-        const price = (prices as any)?.[cgId] ?? 1
         
-        const tokenAmt = splitUsd / price
-        const dec = vault.underlying?.decimals ?? 18
-        const tokenAddr = (vault.underlying?.address as any)?.[chainId ?? 8453] as `0x${string}`
-
+        // 2. Calculate how much of the SOURCE token to send to this vault
+        // The total investment is in USD terms (inputAmt). We calculate the USD slice, 
+        // then convert that slice back into the source asset amount.
+        const splitUsdValue = (inputAmt * a.pct) / 100
+        const sourceTokenSplitAmount = splitUsdValue / sourcePrice
+        
+        // 3. Execute the deposit using the SOURCE token (activating the Gateway Swap)
         await DEPOSIT_MAP[a.vaultId].deposit({ 
-          token: tokenAddr, 
-          amount: parseTokenAmount(tokenAmt.toFixed(dec > 8 ? 8 : dec), dec), 
+          token: sourceTokenAddr, 
+          amount: parseTokenAmount(sourceTokenSplitAmount.toFixed(sourceDec > 8 ? 8 : sourceDec), sourceDec), 
           chainId: chainId ?? 8453 
         })
       }
@@ -158,22 +177,23 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
   const totalPct = allocs.reduce((s, a) => s + a.pct, 0)
   const isValid = numeric > 0 && totalPct === 100
 
-  const toggleVault = (vid: string) => {
-    if (allocs.find(a => a.vaultId === vid)) {
-      if (allocs.length > 1) setAllocs(allocs.filter(a => a.vaultId !== vid))
-    } else {
-      setAllocs([...allocs, { vaultId: vid, pct: 0 }])
-    }
-  }
+  const displayUsdValue = numeric
+  const sourceCgMap: Record<string, string> = { USDC: 'usd-coin', ETH: 'ethereum' }
+  const sourceCgId = sourceCgMap[payWith as 'USDC' | 'ETH'] || 'usd-coin'
+  const sourcePrice = (prices as any)?.[sourceCgId] ?? 1
+  const requiredSourceAmount = displayUsdValue / sourcePrice
 
-  const updatePct = (idx: number, val: number) => {
-    const currentVal = allocs[idx].pct
-    const totalOthers = totalPct - currentVal
-    const nextVal = Math.min(val, 100 - totalOthers) // Cannot exceed 100% total
-    const next = [...allocs]
-    next[idx].pct = Math.max(0, nextVal)
-    setAllocs(next)
-  }
+  const userHasBalance = (() => {
+    if (payWith === 'USDC') {
+      const bal = parseFloat(formatUnits(usdcBalance || 0n, 6))
+      return bal >= requiredSourceAmount
+    } else if (payWith === 'ETH') {
+      const ethBal = parseFloat(ethBalance?.formatted || '0')
+      const wethBal = parseFloat(formatUnits(wethBalance || 0n, 18))
+      return (ethBal + wethBal) >= requiredSourceAmount
+    }
+    return false
+  })()
 
   return (
     <AnimatePresence>
@@ -184,9 +204,23 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
       >
         <motion.div
           initial={{ opacity: 0, scale: 0.95, y: 16 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.95, y: 16 }}
-          style={{ width: '100%', maxWidth: 460, background: 'rgba(13,17,23,0.95)', border: `1px solid ${profile.color}40`, borderRadius: 24, padding: '24px', fontFamily: F }}
+          style={{ 
+            width: '100%', 
+            maxWidth: 460, 
+            maxHeight: 'calc(100vh - 40px)', 
+            overflowY: 'auto', 
+            background: 'rgba(13,17,23,0.95)', 
+            border: `1px solid ${profile.color}40`, 
+            borderRadius: 24, 
+            padding: '18px', 
+            fontFamily: F,
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none'
+            
+          }}
+          className="hide-scrollbar"
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
               <profile.icon size={20} color={profile.color} />
               <h2 style={{ fontSize: 18, fontWeight: 700, color: '#fff', margin: 0 }}>{profile.title}</h2>
@@ -198,80 +232,90 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
 
           {step === 0 && (
             <>
-              <div style={{ marginBottom: 20 }}>
-                <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.15em', display: 'block', marginBottom: 8 }}>Total Investment (USD)</label>
+              {/* Pay With Selector */}
+              <div style={{ marginBottom: 12 }}>
+                <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.15em', display: 'block', marginBottom: 6 }}>Pay With</label>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  {['USDC', 'ETH'].map(asset => (
+                    <button
+                      key={asset}
+                      onClick={() => setPayWith(asset as any)}
+                      style={{
+                        flex: 1, padding: '8px', borderRadius: 10, border: `1px solid ${payWith === asset ? profile.color : 'rgba(255,255,255,0.08)'}`,
+                        background: payWith === asset ? `${profile.color}15` : 'rgba(255,255,255,0.03)',
+                        color: payWith === asset ? profile.color : 'rgba(255,255,255,0.5)',
+                        fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                      }}
+                    >
+                      <div style={{ width: 6, height: 6, borderRadius: '50%', background: payWith === asset ? profile.color : 'rgba(255,255,255,0.2)' }} />
+                      {asset}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <label style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.15em' }}>Investment Amount (USD)</label>
+                  {displayUsdValue > 0 && (
+                    <span style={{ fontSize: 10, color: userHasBalance ? 'rgba(255,255,255,0.4)' : '#f87171', fontWeight: 600 }}>
+                      {payWith === 'ETH' ? `≈ ${requiredSourceAmount.toLocaleString(undefined, { maximumFractionDigits: 6 })} ETH` : `≈ ${requiredSourceAmount.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDC`}
+                    </span>
+                  )}
+                </div>
                 <div style={{ position: 'relative' }}>
                   <input
                     type="number"
                     placeholder="1000"
                     value={totalStr}
                     onChange={e => setTotalStr(e.target.value)}
-                    style={{ width: '100%', padding: '16px 50px 16px 16px', background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 14, color: '#fff', fontSize: 22, outline: 'none', boxSizing: 'border-box', fontFamily: FNUM }}
+                    style={{ width: '100%', padding: '14px 60px 14px 14px', background: 'rgba(255,255,255,0.04)', border: `1px solid ${!userHasBalance && displayUsdValue > 0 ? '#f8717140' : 'rgba(255,255,255,0.08)'}`, borderRadius: 12, color: '#fff', fontSize: 20, outline: 'none', boxSizing: 'border-box', fontFamily: FNUM }}
                   />
-                  <span style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', color: 'rgba(148,163,184,0.5)', fontWeight: 700, fontSize: 13 }}>USD</span>
+                  <span style={{ position: 'absolute', right: 16, top: '50%', transform: 'translateY(-50%)', color: 'rgba(255,255,255,0.4)', fontWeight: 700, fontSize: 13 }}>USD</span>
                 </div>
+                {isValid && displayUsdValue > 0 && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8 }}>
+                    {!userHasBalance && <p style={{ fontSize: 9, color: '#f87171', margin: 0, fontWeight: 700 }}>Insufficient {payWith} Balance</p>}
+                    <p style={{ fontSize: 9, color: 'rgba(255,255,255,0.4)', margin: 0, marginLeft: 'auto' }}>
+                      You will pay approximately <b>{requiredSourceAmount.toFixed(payWith === 'ETH' ? 6 : 2)} {payWith}</b>
+                    </p>
+                  </div>
+                )}
               </div>
 
-              <div style={{ marginBottom: 24 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                  <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.15em', margin: 0 }}>Allocation Split</p>
-                  {profile.allocations.length > 1 && (
-                    <button onClick={() => setIsEditing(!isEditing)} style={{ background: 'transparent', border: 'none', color: profile.color, fontSize: 10, fontWeight: 700, cursor: 'pointer', textTransform: 'uppercase' }}>
-                      {isEditing ? 'Done' : 'Customize'}
-                    </button>
-                  )}
-                </div>
+                <div style={{ marginBottom: 12 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                    <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(255,255,255,0.7)', textTransform: 'uppercase', letterSpacing: '0.15em', margin: 0 }}>Allocation Split</p>
+                  </div>
 
-                {isEditing && (
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 16 }}>
-                    {['yoUSD', 'yoETH', 'yoBTC', 'yoEUR'].map(vid => {
-                      const active = allocs.find(a => a.vaultId === vid)
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {allocs.map((a: any, i: number) => {
                       return (
-                        <button key={vid} onClick={() => toggleVault(vid)} style={{ padding: '4px 10px', borderRadius: 8, fontSize: 10, fontWeight: 600, transition: 'all 0.2s', cursor: 'pointer',
-                          background: active ? `${VAULT_COLORS[vid]}15` : 'rgba(255,255,255,0.04)',
-                          border: `1px solid ${active ? VAULT_COLORS[vid] : 'rgba(255,255,255,0.08)'}`,
-                          color: active ? VAULT_COLORS[vid] : 'rgba(148,163,184,0.6)'
-                        }}>
-                          {vid}
-                        </button>
+                        <div key={i} style={{ padding: '10px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 10 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{a.vaultId}</span>
+                              <span style={{ color: profile.color, fontSize: 10, fontWeight: 700, padding: '2px 6px', background: `${profile.color}10`, borderRadius: 4 }}>{a.pct}%</span>
+                            </div>
+                            <div style={{ textAlign: 'right' }}>
+                              {(() => {
+                                const targetPrice = (prices as any)?.[SYMBOL_TO_CG[VAULTS[a.vaultId as keyof typeof VAULTS].underlying?.symbol || ''] ?? 'usd-coin'] ?? 1
+                                const splitUsdValue = (displayUsdValue * a.pct) / 100
+                                const targetTokenAmt = splitUsdValue / targetPrice
+                                return (
+                                  <>
+                                    <span style={{ color: '#fff', fontSize: 11, fontFamily: FNUM, display: 'block' }}>{targetTokenAmt.toLocaleString(undefined, { maximumFractionDigits: 8 })} Tokens</span>
+                                    <span style={{ fontSize: 9, color: 'rgba(255,255,255,0.3)', fontWeight: 500 }}>${splitUsdValue.toLocaleString(undefined, { maximumFractionDigits: 3 })}</span>
+                                  </>
+                                )
+                              })()}
+                            </div>
+                          </div>
+                        </div>
                       )
                     })}
                   </div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {allocs.map((a: any, i: number) => {
-                    const priceKey = SYMBOL_TO_CG[VAULTS[a.vaultId as keyof typeof VAULTS].underlying?.symbol || ''] ?? 'usd-coin'
-                    const price = (prices as any)?.[priceKey] ?? 1
-                    const splitVal = (numeric * a.pct) / 100
-                    const tokenAmt = splitVal / price
-                    return (
-                      <div key={i} style={{ padding: '12px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.04)', borderRadius: 12 }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: isEditing ? 12 : 0 }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <span style={{ color: '#fff', fontSize: 13, fontWeight: 600 }}>{a.vaultId}</span>
-                            {!isEditing && <span style={{ color: profile.color, fontSize: 10, fontWeight: 700, padding: '2px 6px', background: `${profile.color}10`, borderRadius: 4 }}>{a.pct}%</span>}
-                          </div>
-                          <span style={{ color: 'rgba(148,163,184,0.8)', fontSize: 11, fontFamily: FNUM }}>{tokenAmt.toLocaleString(undefined, { maximumFractionDigits: 4 })} Tokens</span>
-                        </div>
-                        {isEditing && (
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                            <input 
-                              type="range" 
-                              min="0" 
-                              max="100" 
-                              step="1" 
-                              value={a.pct} 
-                              onChange={e => updatePct(i, parseInt(e.target.value))} 
-                              style={{ flex: 1, accentColor: VAULT_COLORS[a.vaultId] || profile.color }} 
-                            />
-                            <span style={{ width: 44, textAlign: 'right', fontSize: 13, fontWeight: 700, color: '#fff', fontFamily: FNUM }}>{a.pct}%</span>
-                          </div>
-                        )}
-                      </div>
-                    )
-                  })}
-                </div>
 
                 <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                   <span style={{ fontSize: 10, color: totalPct === 100 ? '#10b981' : '#f87171', fontWeight: 700 }}>Total: {totalPct}%</span>
@@ -279,12 +323,20 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
                 </div>
               </div>
 
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px', background: 'rgba(214,255,52,0.05)', borderRadius: 12, border: '1px solid rgba(214,255,52,0.1)', marginBottom: 16 }}>
+                <Zap size={14} color={profile.color} />
+                <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)', margin: 0, lineHeight: 1.4 }}>
+                  Smart conversion: Your <b>{payWith}</b> will be automatically diversified across {allocs.length} vaults. 
+                  <span style={{ display: 'block', fontSize: 9, color: 'rgba(255,255,255,0.4)', marginTop: 2 }}>* This flow simulates swap-and-deposit automation.</span>
+                </p>
+              </div>
+
               <button
                 onClick={handleDeposit}
-                disabled={!isValid}
-                style={{ width: '100%', padding: '16px', background: profile.color, border: 'none', borderRadius: 14, color: '#000', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: isValid ? 'pointer' : 'not-allowed', opacity: isValid ? 1 : 0.5, transition: 'all 0.2s', boxShadow: isValid ? `0 0 24px ${profile.color}30` : 'none' }}
+                disabled={!isValid || !userHasBalance}
+                style={{ width: '100%', padding: '16px', background: profile.color, border: 'none', borderRadius: 14, color: '#000', fontSize: 13, fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: (isValid && userHasBalance) ? 'pointer' : 'not-allowed', opacity: (isValid && userHasBalance) ? 1 : 0.5, transition: 'all 0.2s', boxShadow: (isValid && userHasBalance) ? `0 0 24px ${profile.color}30` : 'none' }}
               >
-                Start Diversified Deposit
+                Start One-Click Deposit
               </button>
             </>
           )}
@@ -316,7 +368,10 @@ function BundleModal({ profile, onClose }: { profile: any; onClose: () => void }
           )}
         </motion.div>
       </motion.div>
-      <style>{`@keyframes spin { 100% { transform: rotate(360deg); } }`}</style>
+      <style>{`
+        @keyframes spin { 100% { transform: rotate(360deg); } }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
+      `}</style>
     </AnimatePresence>
   )
 }

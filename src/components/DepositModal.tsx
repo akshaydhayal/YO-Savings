@@ -136,7 +136,20 @@ export default function DepositModal({
           animate={{ opacity: 1, scale: 1, y: 0 }}
           exit={{ opacity: 0, scale: 0.93, y: 16 }}
           transition={{ duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
-          style={{ width: '100%', maxWidth: 420, background: 'rgba(13,17,23,0.95)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 24, overflow: 'hidden', boxShadow: '0 32px 80px rgba(0,0,0,0.8)', fontFamily: F }}
+          style={{ 
+            width: '100%', 
+            maxWidth: 420, 
+            maxHeight: 'calc(100vh - 40px)', 
+            overflowY: 'auto', 
+            background: 'rgba(13,17,23,0.95)', 
+            border: '1px solid rgba(255,255,255,0.08)', 
+            borderRadius: 24, 
+            boxShadow: '0 32px 80px rgba(0,0,0,0.8)', 
+            fontFamily: F,
+            scrollbarWidth: 'none',
+            msOverflowStyle: 'none'
+          }}
+          className="hide-scrollbar"
         >
           {/* ── Modal header ── */}
           <div style={{ padding: '22px 24px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -337,6 +350,7 @@ export default function DepositModal({
       <style>{`
         @keyframes depPulse { 0%,100%{opacity:.6;transform:scale(1)} 50%{opacity:1;transform:scale(1.2)} }
         @keyframes depSpin  { to{transform:rotate(360deg)} }
+        .hide-scrollbar::-webkit-scrollbar { display: none; }
         input[type='number']::-webkit-inner-spin-button,
         input[type='number']::-webkit-outer-spin-button { -webkit-appearance:none; margin:0; }
         input[type='number'] { -moz-appearance:textfield; }

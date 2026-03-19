@@ -1,5 +1,5 @@
 import { useMemo, useState, useEffect } from 'react'
-import { motion } from 'framer-motion'
+import { motion, AnimatePresence } from 'framer-motion'
 import confetti from 'canvas-confetti'
 import MilestoneModal from '../components/MilestoneModal'
 import YieldCalculator from '../components/YieldCalculator'
@@ -25,6 +25,13 @@ const VAULT_COLORS: Record<string, string> = {
   yoUSD: '#00FF8B', yoETH: '#627EEA', yoBTC: '#FFAF4F',
   yoEUR: '#4E6FFF', yoGOLD: '#FFBF00', yoUSDT: '#26A17B',
 }
+
+const THEMES = [
+  { id: 'classic', name: 'Classic Blue', color: '#627EEA', emoji: '🎁' },
+  { id: 'gold', name: 'Golden Celebration', color: '#FFAF4F', emoji: '✨' },
+  { id: 'energy', name: 'Nitro Green', color: '#d6ff34', emoji: '⚡' },
+  { id: 'love', name: 'With Love', color: '#FF5E5E', emoji: '❤️' },
+]
 
 const CARD: React.CSSProperties = {
   background: 'rgba(13,17,23,0.75)',
@@ -147,6 +154,9 @@ export default function DashboardPage() {
   const [milestones, setMilestones] = useState<any[]>([])
   const [activeMilestoneVault, setActiveMilestoneVault] = useState<any>(null)
   const [editableMilestone, setEditableMilestone] = useState<any>(null)
+  
+  // Gift Surprise State
+  const [activeGift, setActiveGift] = useState<any>(null)
 
   // Enriched list INCLUDING vaults with milestones but no position
   const enrichedWithGoals = useMemo(() => {
@@ -193,8 +203,31 @@ export default function DashboardPage() {
     }
   }
 
+  const fetchGifts = async () => {
+    if (!address) return
+    try {
+      const res = await fetch(`/api/gift?recipientAddress=${address.toLowerCase()}`)
+      const data = await res.json()
+      if (data.success && data.data.length > 0) {
+        setActiveGift(data.data[0])
+        confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, zIndex: 1000 })
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  const markGiftClaimed = async (id: string) => {
+    try {
+      await fetch(`/api/gift?id=${id}`, { method: 'PUT' })
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
   useEffect(() => {
     fetchMilestones()
+    fetchGifts()
   }, [address])
 
   useEffect(() => {
@@ -554,6 +587,48 @@ export default function DashboardPage() {
           onSuccess={fetchMilestones}
         />
       )}
+
+      {/* ── Gift Surprise Modal ── */}
+      <AnimatePresence>
+        {activeGift && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(5,7,10,0.85)', backdropFilter: 'blur(12px)' }}
+          >
+            <motion.div
+              initial={{ scale: 0.9, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.9, y: 20 }}
+              style={{ 
+                width: '100%', maxWidth: 400, background: 'rgba(13,17,23,0.95)', border: `2px solid ${THEMES.find(t => t.id === activeGift.theme)?.color || '#d6ff34'}40`, borderRadius: 28, padding: 32, textAlign: 'center', boxShadow: '0 30px 100px rgba(0,0,0,0.8)' 
+              }}
+            >
+              <div style={{ fontSize: 50, marginBottom: 16 }}>
+                {THEMES.find(t => t.id === activeGift.theme)?.emoji || '🎁'}
+              </div>
+              <h2 style={{ fontSize: 24, fontWeight: 800, color: '#fff', margin: '0 0 12px' }}>You have a Gift!</h2>
+              <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 14, lineHeight: 1.6, marginBottom: 20 }}>
+                <b style={{ color: '#fff' }}>{activeGift.senderAddress.slice(0,6)}...{activeGift.senderAddress.slice(-4)}</b> sent you 
+                <b style={{ color: '#d6ff34' }}> ${activeGift.amount}</b> in <b style={{ color: '#fff' }}>{activeGift.vaultId.replace('yo', '')}</b>!
+              </p>
+              
+              {activeGift.message && (
+                <div style={{ background: 'rgba(255,255,255,0.04)', padding: 16, borderRadius: 16, border: '1px solid rgba(255,255,255,0.08)', marginBottom: 24, fontStyle: 'italic' }}>
+                  "{activeGift.message}"
+                </div>
+              )}
+
+              <button
+                onClick={() => {
+                  markGiftClaimed(activeGift._id)
+                  setActiveGift(null)
+                }}
+                style={{ width: '100%', padding: '16px', borderRadius: 14, background: '#d6ff34', color: '#000', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', border: 'none' }}
+              >
+                Accept Gift
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <style>{`
         @media (max-width: 900px) { .dash-metric-grid { grid-template-columns: repeat(2, 1fr) !important; } .dash-charts-grid { grid-template-columns: 1fr !important; } }
