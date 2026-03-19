@@ -48,11 +48,15 @@ Unified view of your financial health.
 
 | Vaults Page | My Savings |
 | :---: | :---: |
-| ![Vaults UI](https://placehold.co/500x350/05070A/ffffff?text=Vaults+Marketplace+UI) | ![Dashboard UI](https://placehold.co/500x350/05070A/ffffff?text=Savings+Dashboard+UI) |
+| ![Vaults UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/vaults.png) | ![Dashboard UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/dashboard.png) |
 
-| Portfolio Baskets | Yo-Gifts |
+| Portfolio Baskets | Smart SIP |
 | :---: | :---: |
-| ![Baskets UI](https://placehold.co/500x350/05070A/ffffff?text=Portfolio+Baskets+UI) | ![Gifts UI](https://placehold.co/500x350/05070A/ffffff?text=Social+Gifting+UI) |
+| ![Baskets UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/baskets.png) | ![Smart SIP UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/sip.png) |
+
+| Yo-Gifts | Gift Look |
+| :---: | :---: |
+| ![Baskets UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/gifts.png) | ![Gifts UI](https://github.com/akshaydhayal/YoVest-Savings/blob/main/src/assets/gifts_card.png) |
 
 ## 🚀 Getting Started
 
