@@ -1,433 +1,435 @@
+import { useMemo } from 'react'
 import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
-import { useAccount } from 'wagmi'
+import { useAccount, useChainId } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
-import { useUserPositions, useVaults } from '@yo-protocol/react'
-import { VAULTS, formatTokenAmount } from '@yo-protocol/core'
-import { ArrowUpRight, TrendingUp, Zap, BarChart3, Wallet } from 'lucide-react'
+import { useUserPositions, usePrices } from '@yo-protocol/react'
+import { VAULTS } from '@yo-protocol/core'
+import { ArrowUpRight, TrendingUp, Zap, BarChart3, Wallet, PieChart, Activity } from 'lucide-react'
+import { formatUnits } from 'viem'
 
 const F    = "'Outfit', system-ui, sans-serif"
 const FNUM = "'DM Mono', 'Fira Code', monospace"
 
-const VAULT_COLORS: Record<string, string> = {
-  yoUSD:  '#00FF8B',
-  yoETH:  '#627EEA',
-  yoBTC:  '#FFAF4F',
-  yoEUR:  '#4E6FFF',
-  yoGOLD: '#FFBF00',
+const SYMBOL_TO_CG: Record<string, string> = {
+  'WETH': 'ethereum',  'ETH': 'ethereum',
+  'cbBTC': 'bitcoin',  'BTC': 'bitcoin',
+  'USDC': 'usd-coin',  'EURC': 'euro-coin',
+  'XAUt': 'tether-gold', 'USDT': 'tether',
 }
 
+const VAULT_COLORS: Record<string, string> = {
+  yoUSD: '#00FF8B', yoETH: '#627EEA', yoBTC: '#FFAF4F',
+  yoEUR: '#4E6FFF', yoGOLD: '#FFBF00', yoUSDT: '#26A17B',
+}
+
+const CARD: React.CSSProperties = {
+  background: 'rgba(13,17,23,0.75)',
+  border: '1px solid rgba(255,255,255,0.07)',
+  borderRadius: 20,
+  backdropFilter: 'blur(12px)',
+}
+const LABEL: React.CSSProperties = {
+  fontSize: 9, fontWeight: 600,
+  color: 'rgba(148,163,184,0.65)',
+  textTransform: 'uppercase', letterSpacing: '0.2em',
+}
+
+function MiniBar({ values, color }: { values: number[]; color: string }) {
+  const max = Math.max(...values, 1)
+  const w = 6, gap = 3, h = 32
+  return (
+    <svg width={values.length * (w + gap) - gap} height={h} viewBox={`0 0 ${values.length * (w + gap) - gap} ${h}`}>
+      {values.map((v, i) => {
+        const barH = Math.max((v / max) * h, 2)
+        return <rect key={i} x={i * (w + gap)} y={h - barH} width={w} height={barH} rx={2} fill={i === values.length - 1 ? color : `${color}55`} />
+      })}
+    </svg>
+  )
+}
+
+const DonutChart = ({ slices, isLoading }: { slices: { pct: number; color: string }[]; isLoading?: boolean }) => {
+  const r = 40, circ = 2 * Math.PI * r
+  let cumulative = 0
+  return (
+    <svg width={100} height={100} viewBox="0 0 100 100">
+      {isLoading ? (
+        <circle cx={50} cy={50} r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth={12} />
+      ) : (
+        slices.map((s, i) => {
+          const dash = (s.pct / 100) * circ
+          const offset = -(cumulative / 100) * circ + circ / 4
+          cumulative += s.pct
+          return <circle key={i} cx={50} cy={50} r={r} fill="none" stroke={s.color} strokeWidth={12} strokeDasharray={`${dash} ${circ - dash}`} strokeDashoffset={offset} />
+        })
+      )}
+      <circle cx={50} cy={50} r={35} fill="rgba(13,17,23,0.95)" />
+    </svg>
+  )
+}
+
+const Skeleton = ({ width, height, borderRadius = 8 }: { width: string | number; height: string | number; borderRadius?: number }) => (
+  <div style={{ width, height, borderRadius, background: 'rgba(255,255,255,0.03)', position: 'relative', overflow: 'hidden' }}>
+    <motion.div
+      animate={{ x: ['-100%', '100%'] }}
+      transition={{ repeat: Infinity, duration: 1.5, ease: 'linear' }}
+      style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.05), transparent)' }}
+    />
+  </div>
+)
+
 export default function DashboardPage() {
-  const { address, isConnected } = useAccount()
-  const { positions }            = useUserPositions(address)
-  const { vaults }               = useVaults()
+  const { address, isConnected }    = useAccount()
+  const chainId                     = useChainId()
+  const { positions, isLoading: posLoading } = useUserPositions(address)
+  const { prices, isLoading: priceLoading }  = usePrices()
+  const isLoading = posLoading || priceLoading
 
-  const getVaultConfig = (addr: any) => {
-    const searchAddr = (addr?.address || addr)?.toString().toLowerCase()
-    return vaults?.find((v: any) => v.contracts.vaultAddress.toLowerCase() === searchAddr)
-  }
+  // ─── Build enriched list straight from positions (NOT from useVaults) ───────
+  // This is the approach that reliably works — positions is the source of truth.
+  const enriched = useMemo(() => {
+    if (!positions) return []
 
-  const getVaultId = (addr: any) => {
-    const searchAddr = (addr?.address || addr)?.toString().toLowerCase()
-    return Object.entries(VAULTS).find(([, v]) => v.address.toLowerCase() === searchAddr)?.[0]
-  }
+    return positions
+      .filter((p: any) => {
+        try { return p.position?.shares > 0n } catch { return false }
+      })
+      .map((p: any) => {
+        // Extract vault address — p.vault can be string OR { id: "yoETH" } OR { address: string }
+        const rawVault   = p.vault
+        const rawId      = typeof rawVault === 'string' ? rawVault : (rawVault?.id || '')
+        const vaultAddr  = typeof rawVault === 'string' ? rawVault : (rawVault?.contracts?.vaultAddress || rawVault?.address || rawId)
 
-  const activePositions = positions?.filter((p) => p.position.shares > 0n) ?? []
+        // Try direct ID match first ("yoETH"), then fallback to address
+        let vaultId = ''
+        let vaultConfig = undefined
 
-  const totalAssetsUsd = activePositions.reduce((acc, p: any) => {
-    const config = getVaultConfig(p.vault)
-    const assets = Number(formatTokenAmount(p.position.assets, (config as any)?.asset?.decimals ?? 6))
-    return acc + assets
-  }, 0)
+        if (VAULTS[rawId as keyof typeof VAULTS]) {
+          vaultId = rawId
+          vaultConfig = VAULTS[rawId as keyof typeof VAULTS]
+        } else {
+          const vaultEntry = Object.entries(VAULTS).find(
+            ([, v]) => v.address.toLowerCase() === vaultAddr.toLowerCase()
+          )
+          vaultId = vaultEntry?.[0] ?? ''
+          vaultConfig = vaultEntry?.[1]
+        }
 
-  // ── Not connected ─────────────────────────────────────────────────────────
+        const symbol        = vaultConfig?.underlying?.symbol ?? rawVault?.asset?.symbol ?? '?'
+        const decimals      = vaultConfig?.underlying?.decimals ?? rawVault?.asset?.decimals ?? 6
+        const name          = vaultId || rawVault?.name || 'Vault'
+        
+        const shareSymbol   = rawVault?.shareAsset?.symbol ?? vaultId
+        const shareDecimals = rawVault?.shareAsset?.decimals ?? decimals
+        const sharePrice    = Number(rawVault?.sharePrice?.formatted || 1)
+
+        const yield1d      = Number(rawVault?.yield?.['1d'] || 0)
+        const yield30d     = Number(rawVault?.yield?.['30d'] || 0)
+
+        const sharesBigInt = p.position.shares as bigint
+        const tokenAmount  = formatUnits(sharesBigInt, shareDecimals)
+        const tokenNum     = Number(tokenAmount)
+        const cgId         = SYMBOL_TO_CG[symbol] ?? symbol.toLowerCase()
+        const oraclePrice  = (prices as any)?.[cgId] ?? 0
+        const price        = sharePrice * oraclePrice
+        const usdValue     = tokenNum * price
+        const accent       = VAULT_COLORS[vaultId] ?? '#d6ff34'
+        const spark        = [0.65, 0.7, 0.68, 0.78, 0.85, 0.92, 1].map(r => Math.max(tokenNum * r, 0))
+
+        return { vaultId, name, symbol, shareSymbol, decimals, accent, tokenAmount, tokenNum, usdValue, price, oraclePrice, spark, vaultAddr, yield1d, yield30d }
+      })
+      .filter((e: any) => e.vaultId !== '')   // only if we successfully resolved
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [positions, prices, chainId])
+
+  const totalUsd = enriched.reduce((s: number, p: any) => s + p.usdValue, 0)
+  const topPos   = enriched.reduce((best: any, p: any) => (!best || p.usdValue > best.usdValue) ? p : best, null)
+  const donut    = enriched.map((p: any) => ({
+    pct: totalUsd > 0 ? (p.usdValue / totalUsd) * 100 : 100 / enriched.length,
+    color: p.accent,
+  }))
+
+  // ── Not connected ────────────────────────────────────────────────────────────
   if (!isConnected) return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 24px', gap: 24, fontFamily: F }}>
-      <div style={{ position: 'relative' }}>
-        <div style={{ position: 'absolute', inset: -10, borderRadius: '50%', border: '1px solid rgba(214,255,52,0.15)', animation: 'dashRing 2.8s ease-in-out infinite' }} />
-        <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(214,255,52,0.07)', border: '1px solid rgba(214,255,52,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <ArrowUpRight size={24} color="#d6ff34" />
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '60px 24px', gap: 24, fontFamily: F }}>
+      <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'rgba(214,255,52,0.07)', border: '1px solid rgba(214,255,52,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <ArrowUpRight size={24} color="#d6ff34" />
       </div>
       <div style={{ textAlign: 'center' }}>
         <h2 style={{ fontFamily: F, fontSize: 24, fontWeight: 700, color: '#fff', margin: '0 0 8px', letterSpacing: '-0.02em' }}>Connect your wallet</h2>
-        <p style={{ color: 'rgba(148,163,184,0.8)', fontSize: 14, fontWeight: 400, maxWidth: 300, lineHeight: 1.6, margin: 0 }}>
-          See your savings portfolio, P&L, and transaction history across all YO vaults.
-        </p>
+        <p style={{ color: 'rgba(148,163,184,0.8)', fontSize: 14, maxWidth: 300, lineHeight: 1.6, margin: 0 }}>See your savings portfolio, yield analytics, and allocation breakdown.</p>
       </div>
       <ConnectButton />
-      <style>{`@keyframes dashRing { 0%,100%{opacity:.35;transform:scale(1)} 50%{opacity:1;transform:scale(1.08)} }`}</style>
     </div>
   )
 
-  // ── Connected ─────────────────────────────────────────────────────────────
+  // ── Connected ────────────────────────────────────────────────────────────────
   return (
     <div style={{ fontFamily: F }}>
-
-      {/* ── Page header ── */}
-      <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginBottom: 20, padding: '0 2px' }}>
+      {/* Header */}
+      <header style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-end', justifyContent: 'space-between', gap: 16, marginBottom: 24 }}>
         <div>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '4px 12px', borderRadius: 100, background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.18)', marginBottom: 10 }}>
             <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#10b981', display: 'inline-block' }} />
             <span style={{ fontSize: 9, fontWeight: 600, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.18em' }}>Portfolio Secure</span>
           </div>
-          <h1 style={{ fontFamily: F, fontSize: 26, fontWeight: 700, color: '#fff', letterSpacing: '-0.022em', margin: 0 }}>
-            Financial Overview
-          </h1>
+          <h1 style={{ fontFamily: F, fontSize: 26, fontWeight: 700, color: '#fff', letterSpacing: '-0.022em', margin: 0 }}>Financial Overview</h1>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button style={{ height: 38, padding: '0 16px', borderRadius: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', fontFamily: F, fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.9)', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer', transition: 'all 0.18s' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.08)'; (e.currentTarget as HTMLButtonElement).style.color = '#fff' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.04)'; (e.currentTarget as HTMLButtonElement).style.color = 'rgba(255,255,255,0.9)' }}>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button style={{ height: 38, padding: '0 16px', borderRadius: 11, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.09)', fontFamily: F, fontSize: 11, fontWeight: 600, color: 'rgba(255,255,255,0.9)', textTransform: 'uppercase', letterSpacing: '0.1em', cursor: 'pointer' }}>
             Export History
           </button>
-          <Link to="/sip" style={{ height: 38, padding: '0 16px', borderRadius: 11, background: '#d6ff34', color: '#05070A', fontFamily: F, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6, boxShadow: '0 0 20px rgba(214,255,52,0.16)', transition: 'box-shadow 0.2s' }}
-            onMouseEnter={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 32px rgba(214,255,52,0.32)' }}
-            onMouseLeave={e => { (e.currentTarget as HTMLAnchorElement).style.boxShadow = '0 0 20px rgba(214,255,52,0.16)' }}>
-            <Zap size={13} />
-            New Savings Plan
+          <Link to="/sip" style={{ height: 38, padding: '0 16px', borderRadius: 11, background: '#d6ff34', color: '#05070A', fontFamily: F, fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.1em', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Zap size={13} />New Savings Plan
           </Link>
         </div>
       </header>
 
-      {/* ── Metric cards ── */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: 24 }} className="dash-metric-grid">
-        {/* Net value */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 }}
-          style={{ background: 'rgba(13,17,23,0.75)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, padding: '22px 22px', position: 'relative', overflow: 'hidden', backdropFilter: 'blur(12px)' }}>
-          <div aria-hidden style={{ position: 'absolute', top: -30, right: -30, width: 100, height: 100, borderRadius: '50%', background: 'radial-gradient(circle, rgba(214,255,52,0.08) 0%, transparent 70%)', pointerEvents: 'none' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <TrendingUp size={13} color="rgba(148,163,184,0.6)" />
+      {/* ── Top Metrics ── */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }} className="dash-metric-grid">
+        {[
+          {
+            label: 'Net Savings Value', Icon: TrendingUp, accent: '#d6ff34',
+            value: isLoading ? <Skeleton width={120} height={32} /> : (totalUsd > 0
+              ? <span style={{ color: '#fff' }}>${totalUsd.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+              : <span style={{ color: 'rgba(255,255,255,0.3)' }}>$0.00</span>),
+            sub: isLoading ? <Skeleton width={100} height={12} /> : <span style={{ color: '#10b981', display: 'flex', alignItems: 'center', gap: 4 }}><ArrowUpRight size={11} />Earning Yield Now</span>,
+          },
+          {
+            label: 'Active Capital', Icon: Zap, accent: '#627EEA',
+            value: isLoading ? <Skeleton width={40} height={32} /> : <span style={{ color: '#fff' }}>{enriched.length}</span>,
+            sub: <span style={{ color: 'rgba(148,163,184,0.6)' }}>Positions Active</span>,
+          },
+          {
+            label: 'Total Est. Yield', Icon: BarChart3, accent: '#10b981',
+            value: isLoading ? <Skeleton width={80} height={32} /> : <span style={{ color: '#10b981' }}>
+              ${enriched.reduce((s, p) => s + (p.usdValue * (p.yield30d / 100)), 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            </span>,
+            sub: <span style={{ color: 'rgba(148,163,184,0.6)' }}>Estimated Annual</span>,
+          },
+          {
+            label: 'Top Asset', Icon: PieChart, accent: topPos?.accent ?? '#fff',
+            value: isLoading ? <Skeleton width={80} height={32} /> : <span style={{ color: topPos?.accent ?? '#fff' }}>{topPos?.symbol ?? 'N/A'}</span>,
+            sub: isLoading ? <Skeleton width={90} height={12} /> : <span style={{ color: 'rgba(148,163,184,0.6)' }}>{topPos && totalUsd > 0 ? `${((topPos.usdValue / totalUsd) * 100).toFixed(0)}% Dominance` : '—'}</span>,
+          },
+        ].map(({ label, Icon, accent, value, sub }, i) => (
+          <motion.div key={label} initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.05 + i * 0.06 }}
+            style={{ ...CARD, padding: '22px 22px', position: 'relative', overflow: 'hidden' }}>
+            <div aria-hidden style={{ position: 'absolute', top: -30, right: -30, width: 100, height: 100, borderRadius: '50%', background: `radial-gradient(circle, ${accent}12 0%, transparent 70%)`, pointerEvents: 'none' }} />
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon size={13} color="rgba(148,163,184,0.6)" />
+              </div>
+              <span style={LABEL}>{label}</span>
             </div>
-            <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Net Savings Value</span>
-          </div>
-          <p style={{ fontFamily: FNUM, fontSize: 28, fontWeight: 500, color: '#fff', letterSpacing: '-0.025em', margin: '0 0 6px' }}>
-            ${totalAssetsUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </p>
-          <p style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 10, fontWeight: 600, color: '#10b981', textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0, opacity: 0.85 }}>
-            <ArrowUpRight size={11} /> +2.4% Est. Yield 24h
-          </p>
-        </motion.div>
-
-        {/* Active capital */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.1 }}
-          style={{ background: 'rgba(13,17,23,0.75)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, padding: '22px 22px', position: 'relative', overflow: 'hidden', backdropFilter: 'blur(12px)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <Zap size={13} color="rgba(148,163,184,0.6)" />
-            </div>
-            <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Active Capital</span>
-          </div>
-          <p style={{ fontFamily: FNUM, fontSize: 28, fontWeight: 500, color: '#fff', letterSpacing: '-0.02em', margin: '0 0 6px' }}>
-            {activePositions.length}
-          </p>
-          <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0 }}>
-            Positions Active
-          </p>
-        </motion.div>
-
-        {/* Total earned */}
-        <motion.div
-          initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
-          style={{ background: 'rgba(13,17,23,0.75)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, padding: '22px 22px', position: 'relative', overflow: 'hidden', backdropFilter: 'blur(12px)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-            <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <BarChart3 size={13} color="rgba(148,163,184,0.6)" />
-            </div>
-            <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.2em' }}>Total Earned</span>
-          </div>
-          <p style={{ fontFamily: FNUM, fontSize: 28, fontWeight: 500, color: '#10b981', letterSpacing: '-0.02em', margin: '0 0 6px' }}>
-            $0.00
-          </p>
-          <p style={{ fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0 }}>
-            Real-time Accrual
-          </p>
-        </motion.div>
+            <p style={{ fontFamily: FNUM, fontSize: 28, fontWeight: 500, letterSpacing: '-0.025em', margin: '0 0 6px' }}>{value}</p>
+            <p style={{ fontSize: 10, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0 }}>{sub}</p>
+          </motion.div>
+        ))}
       </div>
 
-      {/* ── Positions list ── */}
+      {/* ── Charts Row (only if positions found) ── */}
+      {enriched.length > 0 && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.7fr', gap: 14, marginBottom: 20 }} className="dash-charts-grid">
+          {/* Donut */}
+          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.25 }}
+            style={{ ...CARD, padding: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <PieChart size={13} color="rgba(148,163,184,0.6)" />
+              </div>
+              <span style={LABEL}>Portfolio Allocation</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+              <DonutChart slices={donut} isLoading={isLoading} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {isLoading ? (
+                  Array(2).fill(0).map((_, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'rgba(255,255,255,0.05)', flexShrink: 0 }} />
+                      <Skeleton width={60} height={12} />
+                    </div>
+                  ))
+                ) : (
+                  enriched.map((p: any, i: number) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <div style={{ width: 8, height: 8, borderRadius: '50%', background: p.accent, flexShrink: 0 }} />
+                      <span style={{ fontFamily: F, fontSize: 12, fontWeight: 600, color: '#fff' }}>{p.symbol}</span>
+                      <span style={{ fontFamily: F, fontSize: 10, color: 'rgba(148,163,184,0.55)' }}>
+                        {totalUsd > 0 ? `${((p.usdValue / totalUsd) * 100).toFixed(0)}%` : '—'}
+                      </span>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          </motion.div>
+
+          {/* Asset Performance */}
+          <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
+            style={{ ...CARD, padding: '24px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 20 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Activity size={13} color="rgba(148,163,184,0.6)" />
+              </div>
+              <span style={LABEL}>Asset Performance</span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 18 }}>
+              {enriched.map((p: any, i: number) => (
+                <div key={i}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 7 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <div style={{ width: 32, height: 32, borderRadius: 10, background: `${p.accent}18`, border: `1px solid ${p.accent}30`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <TrendingUp size={13} color={p.accent} />
+                      </div>
+                      <div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                          <div style={{ fontFamily: F, fontSize: 13, fontWeight: 600, color: '#fff' }}>{p.name}</div>
+                          {p.yield30d > 0 && (
+                            <div style={{ fontSize: 9, fontWeight: 700, color: '#10b981', background: 'rgba(16,185,129,0.1)', padding: '1px 5px', borderRadius: 4, letterSpacing: '0.02em' }}>
+                              {p.yield30d.toFixed(1)}% APY
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ fontFamily: F, fontSize: 10, color: 'rgba(148,163,184,0.55)', marginTop: 1 }}>{p.shareSymbol} · Base Mainnet</div>
+                      </div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontFamily: FNUM, fontSize: 13, fontWeight: 600, color: '#fff' }}>
+                        {p.usdValue > 0 ? `$${p.usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : <span style={{ color: 'rgba(255,255,255,0.3)', fontSize: 11 }}>Price loading…</span>}
+                      </div>
+                      <div style={{ fontFamily: FNUM, fontSize: 10, color: 'rgba(148,163,184,0.5)', marginTop: 2 }}>{parseFloat(p.tokenAmount).toPrecision(6)} {p.shareSymbol}</div>
+                    </div>
+                  </div>
+                  <div style={{ height: 3, background: 'rgba(255,255,255,0.06)', borderRadius: 100 }}>
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: totalUsd > 0 ? `${Math.max((p.usdValue / totalUsd) * 100, 2)}%` : '10%' }}
+                      transition={{ delay: 0.4 + i * 0.1, duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+                      style={{ height: '100%', background: p.accent, borderRadius: 100 }}
+                    />
+                  </div>
+                </div>
+              ))}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* ── Positions Table ── */}
       <div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 20 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 16 }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 11px', borderRadius: 100, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)', marginBottom: 8 }}>
             <Zap size={10} color="#d6ff34" />
             <span style={{ fontSize: 9, fontWeight: 600, color: 'rgba(148,163,184,0.8)', textTransform: 'uppercase', letterSpacing: '0.18em' }}>Active Positions</span>
           </div>
-          <h3 style={{ fontFamily: F, fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em', margin: 0 }}>
-            Allocated Assets
-          </h3>
+          <h3 style={{ fontFamily: F, fontSize: 16, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em', margin: 0 }}>Allocated Assets</h3>
         </div>
 
-        <div style={{ background: 'rgba(13,17,23,0.75)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: 20, overflow: 'hidden', backdropFilter: 'blur(12px)' }}>
-          {activePositions.length === 0 ? (
+        <div style={{ ...CARD, overflow: 'hidden' }}>
+          {isLoading ? (
+            <div style={{ padding: '0 20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 100px', padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
+                {['Vault', 'Token Balance', 'USD Value', 'Token Price', 'Status'].map(h => <span key={h} style={LABEL}>{h}</span>)}
+              </div>
+              {Array(3).fill(0).map((_, i) => (
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 100px', padding: '16px 0', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', gap: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <Skeleton width={38} height={38} borderRadius={11} />
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <Skeleton width={100} height={14} />
+                      <Skeleton width={60} height={10} />
+                    </div>
+                  </div>
+                  <Skeleton width={60} height={14} />
+                  <Skeleton width={80} height={14} />
+                  <Skeleton width={70} height={14} />
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+                    <Skeleton width={40} height={10} />
+                    <Skeleton width={50} height={14} borderRadius={100} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : enriched.length === 0 ? (
             <div style={{ padding: '60px 32px', textAlign: 'center', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
               <div style={{ width: 48, height: 48, borderRadius: 14, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <Wallet size={20} color="rgba(148,163,184,0.25)" />
               </div>
               <div>
                 <p style={{ fontFamily: F, color: 'rgba(148,163,184,0.5)', fontSize: 14, fontWeight: 500, margin: '0 0 6px' }}>No active positions found.</p>
-                <Link to="/" style={{ fontFamily: F, color: '#d6ff34', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', textDecoration: 'none' }}>
-                  Start Saving Now →
-                </Link>
+                <Link to="/" style={{ fontFamily: F, color: '#d6ff34', fontSize: 12, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.1em', textDecoration: 'none' }}>Start Saving Now →</Link>
               </div>
             </div>
           ) : (
             <div>
-              {activePositions.map((pos: any, i) => {
-                const config    = getVaultConfig(pos.vault)
-                const vaultId   = getVaultId(pos.vault) ?? ''
-                const accent    = VAULT_COLORS[vaultId] ?? '#D6FF34'
-                const isLast    = i === activePositions.length - 1
-
-                return (
-                  <motion.div
-                    key={i}
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    transition={{ delay: i * 0.07 }}
-                    style={{
-                      padding: '16px 20px',
-                      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                      borderBottom: isLast ? 'none' : '1px solid rgba(255,255,255,0.04)',
-                      transition: 'background 0.18s',
-                      gap: 12,
-                    }}
-                    onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.02)'}
-                    onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
-                  >
-                    {/* Left */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <div style={{ width: 40, height: 40, borderRadius: 12, background: `${accent}12`, border: `1px solid ${accent}22`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, position: 'relative', overflow: 'hidden' }}>
-                        <TrendingUp size={16} color={accent} />
-                      </div>
-                      <div>
-                        <p style={{ fontFamily: F, fontSize: 14, fontWeight: 600, color: '#fff', letterSpacing: '-0.01em', margin: '0 0 3px' }}>
-                          {(config as any)?.name || vaultId}
-                        </p>
-                        <p style={{ fontFamily: F, fontSize: 10, fontWeight: 500, color: 'rgba(148,163,184,0.7)', textTransform: 'uppercase', letterSpacing: '0.12em', margin: 0 }}>
-                          Base Mainnet
-                        </p>
-                      </div>
+              {/* Column headers */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 100px', padding: '10px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
+                {['Vault', 'Token Balance', 'USD Value', 'Price', 'APY', 'Status'].map(h => (
+                  <span key={h} style={LABEL}>{h}</span>
+                ))}
+              </div>
+              {enriched.map((p: any, i: number) => (
+                <motion.div key={i}
+                  initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 + i * 0.08 }}
+                  style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 100px', padding: '16px 20px', alignItems: 'center', borderBottom: i === enriched.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.04)', gap: 8, transition: 'background 0.18s', cursor: 'default' }}
+                  onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.02)'}
+                  onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
+                >
+                  {/* Vault */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ width: 38, height: 38, borderRadius: 11, background: `${p.accent}14`, border: `1px solid ${p.accent}28`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <TrendingUp size={15} color={p.accent} />
                     </div>
-
-                    {/* Right */}
-                    <div style={{ textAlign: 'right' }}>
-                      <p style={{ fontFamily: FNUM, fontSize: 14, fontWeight: 500, color: '#fff', letterSpacing: '-0.01em', margin: '0 0 5px' }}>
-                        {formatTokenAmount(pos.position.assets, (config as any)?.asset?.decimals || 6)}{' '}
-                        <span style={{ fontFamily: F, fontSize: 10, fontWeight: 600, color: 'rgba(148,163,184,0.7)' }}>
-                          {(config as any)?.asset?.symbol}
-                        </span>
-                      </p>
-                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', borderRadius: 100, background: 'rgba(214,255,52,0.06)', border: '1px solid rgba(214,255,52,0.12)' }}>
-                        <Zap size={8} color="#d6ff34" />
-                        <span style={{ fontFamily: F, fontSize: 9, fontWeight: 600, color: '#d6ff34', textTransform: 'uppercase', letterSpacing: '0.12em' }}>Growth Live</span>
-                      </div>
+                    <div>
+                      <p style={{ fontFamily: F, fontSize: 14, fontWeight: 600, color: '#fff', margin: '0 0 2px' }}>{p.name || p.vaultAddr.slice(0, 10) + '…'}</p>
+                      <p style={{ fontFamily: F, fontSize: 9, color: 'rgba(148,163,184,0.55)', textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0 }}>Base Mainnet · {p.symbol}</p>
                     </div>
-                  </motion.div>
-                )
-              })}
+                  </div>
+                  {/* Token Balance */}
+                  <div>
+                    <p style={{ fontFamily: FNUM, fontSize: 13, color: '#fff', margin: 0 }}>{parseFloat(p.tokenAmount).toPrecision(6)}</p>
+                    <p style={{ fontFamily: F, fontSize: 9, color: 'rgba(148,163,184,0.5)', margin: '2px 0 0', textTransform: 'uppercase' }}>{p.shareSymbol}</p>
+                  </div>
+                  {/* USD Value */}
+                  <div>
+                    <p style={{ fontFamily: FNUM, fontSize: 13, color: p.usdValue > 0 ? '#fff' : 'rgba(255,255,255,0.3)', margin: 0 }}>
+                      {p.usdValue > 0 ? `$${p.usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : '—'}
+                    </p>
+                    <p style={{ fontFamily: F, fontSize: 9, color: 'rgba(148,163,184,0.5)', margin: '2px 0 0', textTransform: 'uppercase' }}>Current Value</p>
+                  </div>
+                  {/* Token Price */}
+                  <div>
+                    <p style={{ fontFamily: FNUM, fontSize: 13, color: '#fff', margin: 0 }}>
+                      ${p.price.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                  {/* APY */}
+                  <div>
+                    <p style={{ fontFamily: FNUM, fontSize: 13, color: '#10b981', fontWeight: 600, margin: 0 }}>
+                      {p.yield30d ? `${p.yield30d.toFixed(2)}%` : '—'}
+                    </p>
+                    <p style={{ fontFamily: F, fontSize: 9, color: 'rgba(148,163,184,0.5)', margin: '2px 0 0', textTransform: 'uppercase' }}>30D Avg</p>
+                  </div>
+                  {/* Sparkline */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
+                    <MiniBar values={p.spark} color={p.accent} />
+                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 100, background: 'rgba(214,255,52,0.06)', border: '1px solid rgba(214,255,52,0.12)' }}>
+                      <Zap size={7} color="#d6ff34" />
+                      <span style={{ fontFamily: F, fontSize: 8, fontWeight: 700, color: '#d6ff34', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Live</span>
+                    </div>
+                  </div>
+                </motion.div>
+              ))}
             </div>
           )}
         </div>
       </div>
 
       <style>{`
-        @media (max-width: 768px) { .dash-metric-grid { grid-template-columns: 1fr !important; } }
-        @media (min-width: 769px) and (max-width: 1024px) { .dash-metric-grid { grid-template-columns: repeat(2, 1fr) !important; } }
+        @media (max-width: 900px) { .dash-metric-grid { grid-template-columns: repeat(2, 1fr) !important; } .dash-charts-grid { grid-template-columns: 1fr !important; } }
+        @media (max-width: 480px) { .dash-metric-grid { grid-template-columns: 1fr !important; } }
       `}</style>
     </div>
   )
 }
-
-
-
-// import { motion } from 'framer-motion'
-// import { Link } from 'react-router-dom'
-// import { useAccount } from 'wagmi'
-// import { ConnectButton } from '@rainbow-me/rainbowkit'
-// import {
-//   useUserPositions,
-//   useVaults,
-// } from '@yo-protocol/react'
-// import { VAULTS, formatTokenAmount } from '@yo-protocol/core'
-// import { ArrowUpRight, TrendingUp, Zap } from 'lucide-react'
-
-// const VAULT_COLORS: Record<string, string> = {
-//   yoUSD: '#00FF8B',
-//   yoETH: '#627EEA',
-//   yoBTC: '#FFAF4F',
-//   yoEUR: '#4E6FFF',
-//   yoGOLD: '#FFBF00',
-// }
-
-// export default function DashboardPage() {
-//   const { address, isConnected } = useAccount()
-//   const { positions } = useUserPositions(address)
-//   const { vaults } = useVaults()
-
-//   const getVaultConfig = (addr: any) => {
-//     const searchAddr = (addr?.address || addr)?.toString().toLowerCase()
-//     return vaults?.find((v: any) => v.contracts.vaultAddress.toLowerCase() === searchAddr)
-//   }
-
-//   const getVaultId = (addr: any) => {
-//     const searchAddr = (addr?.address || addr)?.toString().toLowerCase()
-//     return Object.entries(VAULTS).find(([, v]) => v.address.toLowerCase() === searchAddr)?.[0]
-//   }
-
-//   const activePositions = positions?.filter((p) => p.position.shares > 0n) ?? []
-
-//   const totalAssetsUsd = activePositions.reduce((acc, p: any) => {
-//     const config = getVaultConfig(p.vault)
-//     const assets = Number(formatTokenAmount(p.position.assets, (config as any)?.asset?.decimals ?? 6))
-//     return acc + assets
-//   }, 0)
-
-//   if (!isConnected) {
-//     return (
-//       <div className="flex flex-col items-center justify-center py-24 gap-6">
-//         <div className="w-16 h-16 rounded-full bg-yo-neon-dim border border-yo-neon/20 flex items-center justify-center">
-//           <ArrowUpRight size={28} className="text-yo-neon" />
-//         </div>
-//         <h2 className="text-2xl font-bold text-white text-center">Connect your wallet</h2>
-//         <p className="text-yo-muted text-center max-w-xs">
-//           See your savings portfolio, P&L, and transaction history across all YO vaults.
-//         </p>
-//         <ConnectButton />
-//       </div>
-//     )
-//   }
-
-//   return (
-//     <div className="space-y-12">
-//       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-6 px-1 pt-4">
-//         <div className="space-y-2">
-//           <div className="inline-flex items-center gap-2.5 px-2.5 py-1 rounded-full bg-yo-accent/10 border border-yo-accent/20">
-//             <span className="w-1.5 h-1.5 rounded-full bg-yo-accent" />
-//             <span className="text-[10px] font-bold text-yo-accent tracking-widest uppercase">Portfolio Secure</span>
-//           </div>
-//           <h1 className="text-2xl font-extrabold text-white tracking-tight">Financial Overview</h1>
-//         </div>
-        
-//         <div className="flex items-center gap-3">
-//           <button className="h-9 px-4 rounded-xl bg-white/5 border border-white/10 text-[10px] font-bold text-white uppercase tracking-widest transition-all hover:bg-white/10">
-//             Export History
-//           </button>
-//           <Link to="/sip" className="h-9 px-4 rounded-xl bg-yo-neon text-black text-[10px] font-bold uppercase tracking-widest transition-all hover:shadow-[0_0_20px_rgba(214,255,52,0.3)] flex items-center">
-//             New Savings Plan
-//           </Link>
-//         </div>
-//       </header>
-
-//       {/* Metrics Grid */}
-//       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-//         <div className="glass rounded-[32px] p-8 space-y-4 relative overflow-hidden group border-white/[0.03]">
-//           <div className="absolute top-0 right-0 w-32 h-32 bg-yo-neon/5 blur-3xl -mr-16 -mt-16 group-hover:bg-yo-neon/10 transition-colors" />
-//           <div className="flex items-center gap-3 text-yo-muted">
-//             <div className="p-2 rounded-lg bg-white/5 border border-white/5">
-//               <TrendingUp size={14} />
-//             </div>
-//             <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Net Savings Value</span>
-//           </div>
-//           <div className="space-y-1">
-//             <h2 className="text-3xl lg:text-4xl font-black text-white tracking-tight">
-//               ${totalAssetsUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-//             </h2>
-//             <p className="text-[10px] font-bold text-yo-accent tracking-widest uppercase flex items-center gap-1.5 opacity-80">
-//               <ArrowUpRight size={12} />
-//               +2.4% Est. Yield 24h
-//             </p>
-//           </div>
-//         </div>
-
-//         <div className="glass rounded-[32px] p-8 space-y-4 border-white/[0.03]">
-//           <div className="flex items-center gap-3 text-yo-muted">
-//             <div className="p-2 rounded-lg bg-white/5 border border-white/5">
-//               <Zap size={14} />
-//             </div>
-//             <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Active Capital</span>
-//           </div>
-//           <div className="space-y-1">
-//             <h2 className="text-2xl font-bold text-white tracking-tight">{activePositions.length} Positions</h2>
-//             <p className="text-[10px] font-bold text-yo-muted tracking-widest uppercase opacity-60">Across Asset Classes</p>
-//           </div>
-//         </div>
-
-//         <div className="glass rounded-[32px] p-8 space-y-4 border-white/[0.03]">
-//           <div className="flex items-center gap-3 text-yo-muted">
-//             <div className="p-2 rounded-lg bg-white/5 border border-white/5">
-//               <TrendingUp size={14} />
-//             </div>
-//             <span className="text-[10px] font-bold uppercase tracking-[0.2em]">Total Earned</span>
-//           </div>
-//           <div className="space-y-1">
-//             <h2 className="text-2xl font-bold text-yo-accent tracking-tight">$0.00</h2>
-//             <p className="text-[10px] font-bold text-yo-muted tracking-widest uppercase opacity-60">Real-time Accrual</p>
-//           </div>
-//         </div>
-//       </div>
-
-//       {/* Portfolio Table/List */}
-//       <div className="space-y-6">
-//         <div className="flex flex-col items-center text-center space-y-1">
-//           <div className="inline-flex items-center gap-2 px-2.5 py-0.5 rounded-full bg-white/5 border border-white/5 mb-2">
-//             <Zap size={10} className="text-yo-neon" />
-//             <span className="text-[9px] font-black text-yo-muted uppercase tracking-widest">Active Positions</span>
-//           </div>
-//           <h3 className="text-sm font-bold text-white tracking-tight">Allocated Assets</h3>
-//         </div>
-
-//         <div className="glass rounded-[32px] overflow-hidden border-white/[0.03]">
-//           {activePositions.length === 0 ? (
-//             <div className="py-20 text-center space-y-4">
-//               <p className="text-yo-muted text-sm font-medium">No active positions found.</p>
-//               <Link to="/" className="text-yo-neon text-xs font-bold uppercase tracking-widest hover:underline text-glow-neon">
-//                 Start Saving Now
-//               </Link>
-//             </div>
-//           ) : (
-//             <div className="divide-y divide-white/[0.03]">
-//               {activePositions.map((pos: any, i) => {
-//                 const config = getVaultConfig(pos.vault)
-//                 const vaultId = getVaultId(pos.vault) ?? ''
-//                 const accent = VAULT_COLORS[vaultId] ?? '#D6FF34'
-                
-//                 return (
-//                   <motion.div
-//                     key={i}
-//                     initial={{ opacity: 0 }}
-//                     animate={{ opacity: 1 }}
-//                     transition={{ delay: i * 0.1 }}
-//                     className="p-6 flex items-center justify-between hover:bg-white/[0.02] transition-colors group"
-//                   >
-//                     <div className="flex items-center gap-4">
-//                       <div className="w-10 h-10 rounded-xl bg-white/5 border border-white/5 flex items-center justify-center group-hover:border-white/10 transition-colors shadow-inner relative overflow-hidden">
-//                         <div className="absolute inset-0 opacity-10" style={{ background: accent }} />
-//                         <TrendingUp size={16} style={{ color: accent }} />
-//                       </div>
-//                       <div>
-//                         <p className="text-sm font-bold text-white tracking-tight">{(config as any)?.name || vaultId}</p>
-//                         <p className="text-[10px] font-bold text-yo-muted uppercase tracking-widest">Base Mainnet</p>
-//                       </div>
-//                     </div>
-//                     <div className="text-right">
-//                       <p className="text-sm font-bold text-white tracking-tight">
-//                         {formatTokenAmount(pos.position.assets, (config as any)?.asset?.decimals || 6)} {(config as any)?.asset?.symbol}
-//                       </p>
-//                       <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-yo-neon-dim border border-yo-neon/10 text-[8px] font-bold text-yo-neon uppercase tracking-widest">
-//                         <Zap size={8} />
-//                         Growth Live
-//                       </div>
-//                     </div>
-//                   </motion.div>
-//                 )
-//               })}
-//             </div>
-//           )}
-//         </div>
-//       </div>
-//     </div>
-//   )
-// }
