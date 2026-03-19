@@ -76,6 +76,7 @@ Instead of just depositing money, users can create specific "Goals" (e.g., "New 
 Users assign a target amount to a vault position.
 We display a beautiful progress bar showing their total savings + accumulated yield pushing them towards their goal.
 Confetti animations when a goal is reached.
+
 2. Interactive Yield Calculator & Projections
 A visual tool to show the magic of compound interest. How it works:
 
@@ -87,6 +88,8 @@ Retail users often don't know which vault to pick. How it works:
 
 We create "Risk Profiles" directly in the UI: Conservative (100% yoUSD), Balanced (50% yoUSD / 50% yoETH), Aggressive (100% yoETH).
 A single "Deposit" button automatically splits their funds across the chosen vaults using multiple useDeposit calls under the hood.
+
+
 4. Smart Rebalancing Alerts
 Make the app feel like a premium robo-advisor. How it works:
 
@@ -100,3 +103,38 @@ Calculate what they would have earned at an average bank rate (0.5%).
 Display a massive number: "You've earned $450 more than your traditional bank!"
 Recommendation for Next Steps
 Since we just finalized the SIP (Systematic Investment Plan) feature, Goal-Based Savings or the Interactive Yield Calculator would naturally complement it perfectly, turning the app from a simple dashboard into a true financial planner.
+
+
+
+
+
+
+
+
+
+
+
+Yo-Gift: Simplified Direct Design
+Instead of complex "Claim Links," we will implement Direct Gifting. You send yield-bearing assets directly to a friend's wallet, and we use MongoDB to attach the "Social" experience (message, theme, notification).
+
+1. The Direct Flow (Sender)
+Choose Recipient: Users enter their friend's wallet address or Base Name (e.g., akshay.base).
+Configure Gift:
+Amount (e.g., $10 USDC).
+Vault (e.g., yoUSD).
+Message: "Hope this grows fast! Happy Birthday!"
+Execute Transaction:
+We trigger useDeposit on the Yo Protocol.
+Immediately after (or as part of a batch if supported), the shares are transferred to the friend's address.
+Log Social Metadata: The app saves the sender, recipient, and message in the MongoDB gifts collection.
+2. The Recipient Experience (Dashboard)
+Login: Friend connects their wallet to YoVest.
+Surprise Popup: The app checks the MongoDB gifts collection: "You have a Gift! akshay.base sent you $10 in yoUSD! 🎁"
+Display Message: A beautiful overlay shows the sender's message and the digital card theme.
+Active Portfolio: The gifted $10 is already in their dashboard, earning yield.
+3. Why this is "Simple & Practical"
+Low Gas: No specialized escrow contract needed.
+Immediate Value: The moment the transaction is confirmed, the recipient is earning yield.
+Social Connection: Using MongoDB to carry the "Message" means the on-chain data stays clean, but the user experience stays "Human."
+4. Technical Change
+Update the api/models/Gift.ts to focus on recipientAddress instead of claimCode.

@@ -105,7 +105,7 @@ function FL({ children }: { children: React.ReactNode }) {
 export default function SIPPage() {
   const { address, isConnected } = useAccount()
   const [goals, setGoals] = useState<SIPGoal[]>([])
-  const [form,  setForm]  = useState({ vaultId: Object.keys(VAULTS)[0] ?? 'yoUSD', amount: '', period: 'Weekly' as Period })
+  const [form,  setForm]  = useState({ vaultId: Object.keys(VAULTS)[0] ?? 'yoUSD', amount: '', period: 'Weekly' as Period, goalName: '', targetAmount: '' })
   const [busy,  setBusy]  = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -139,7 +139,21 @@ export default function SIPPage() {
       const data = await res.json()
       if (data.success) {
         setGoals([...goals, data.data])
-        setForm(f => ({ ...f, amount: '' }))
+        
+        if (form.goalName && form.targetAmount) {
+          await fetch('/api/milestone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userAddress: address.toLowerCase(),
+              vaultId: form.vaultId,
+              targetAmount: Number(form.targetAmount),
+              name: form.goalName
+            })
+          })
+        }
+
+        setForm(f => ({ ...f, amount: '', goalName: '', targetAmount: '' }))
       }
     } catch (e) {
       console.error('Failed to add SIP goal:', e)
@@ -339,6 +353,48 @@ export default function SIPPage() {
               <div style={{ position:'absolute', right:13, top:'50%', transform:'translateY(-50%)', display:'flex', alignItems:'center', gap:5, background:'rgba(255,255,255,0.06)', border:'1px solid rgba(255,255,255,0.09)', borderRadius:8, padding:'4px 10px' }}>
                 <div style={{ width:7, height:7, borderRadius:'50%', background:'#2775CA', flexShrink:0 }} />
                 <span style={{ fontFamily:F_MONO, fontSize:11, fontWeight:500, color:'rgba(255,255,255,0.7)', letterSpacing:'0.04em' }}>USDC</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Optional Goal Settings */}
+          <div style={{ padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: 14, border: '1px solid rgba(255,255,255,0.05)', marginBottom: 20 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+              <div style={{ width: 24, height: 24, borderRadius: 6, background: 'rgba(214,255,52,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Target size={12} color="#d6ff34" />
+              </div>
+              <span style={{ fontFamily: F_SANS, fontSize: 12, fontWeight: 600, color: '#fff' }}>Link a Savings Goal (Optional)</span>
+            </div>
+            
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <FL>Goal Name</FL>
+                <input
+                  placeholder="e.g. New Car"
+                  value={form.goalName}
+                  onChange={e => setForm(f => ({ ...f, goalName: e.target.value }))}
+                  style={{
+                    width: '100%', height: 44, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '0 14px',
+                    fontSize: 13, color: '#fff', fontFamily: F_SANS, outline: 'none', transition: 'border-color 0.2s'
+                  }}
+                  onFocus={e => e.currentTarget.style.borderColor = 'rgba(214,255,52,0.38)'}
+                  onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+                />
+              </div>
+              <div>
+                <FL>Target Amount</FL>
+                <input
+                  type="number"
+                  placeholder="5000"
+                  value={form.targetAmount}
+                  onChange={e => setForm(f => ({ ...f, targetAmount: e.target.value }))}
+                  style={{
+                    width: '100%', height: 44, background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: 10, padding: '0 14px',
+                    fontSize: 13, color: '#fff', fontFamily: F_MONO, outline: 'none', transition: 'border-color 0.2s'
+                  }}
+                  onFocus={e => e.currentTarget.style.borderColor = 'rgba(214,255,52,0.38)'}
+                  onBlur={e => e.currentTarget.style.borderColor = 'rgba(255,255,255,0.08)'}
+                />
               </div>
             </div>
           </div>

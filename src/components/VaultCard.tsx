@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { TrendingUp, Zap, ArrowUpRight, Wallet } from 'lucide-react'
+import { TrendingUp, Zap, ArrowUpRight, Wallet, Target } from 'lucide-react'
 import { useVaultState } from '@yo-protocol/react'
 import { useAccount } from 'wagmi'
 import { VAULTS, formatTokenAmount } from '@yo-protocol/core'
 import DepositModal from './DepositModal'
+import MilestoneModal from './MilestoneModal'
 
 const F    = "'Outfit', system-ui, sans-serif"
 const FNUM = "'DM Mono', 'Fira Code', monospace"
@@ -24,6 +25,7 @@ const card = {
 
 export default function VaultCard({ vault, position }: { vault: any; position?: any }) {
   const [modalOpen, setModalOpen] = useState(false)
+  const [milestoneOpen, setMilestoneOpen] = useState(false)
   const { address }  = useAccount()
   const vaultAddress = vault.contracts?.vaultAddress || vault.address
   const { vaultState } = useVaultState(vaultAddress)
@@ -92,18 +94,34 @@ export default function VaultCard({ vault, position }: { vault: any; position?: 
             </div>
           </div>
 
-          {/* Status badge */}
-          <div style={{
-            padding: '4px 10px', borderRadius: 100,
-            fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.12em',
-            background: isGold ? 'rgba(255,255,255,0.03)' : hasPosition ? `${accentColor}10` : 'rgba(255,255,255,0.04)',
-            border: `1px solid ${isGold ? 'rgba(255,255,255,0.06)' : hasPosition ? `${accentColor}25` : 'rgba(255,255,255,0.08)'}`,
-            color: isGold ? 'rgba(148,163,184,0.4)' : hasPosition ? accentColor : 'rgba(148,163,184,0.7)',
-            flexShrink: 0,
-          }}>
-            {isGold ? 'Coming Soon' : hasPosition ? 'Active' : 'Available'}
+            {/* Status badge & Goal button */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {!isGold && address && (
+                <button 
+                  onClick={(e) => { e.stopPropagation(); setMilestoneOpen(true) }}
+                  title="Set Savings Goal"
+                  style={{
+                    width: 28, height: 28, borderRadius: 8, background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
+                  onMouseLeave={e => e.currentTarget.style.background = 'rgba(255,255,255,0.04)'}
+                >
+                  <Target size={14} color={accentColor} />
+                </button>
+              )}
+              <div style={{
+                padding: '4px 10px', borderRadius: 100,
+                fontSize: 9, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.12em',
+                background: isGold ? 'rgba(255,255,255,0.03)' : hasPosition ? `${accentColor}10` : 'rgba(255,255,255,0.04)',
+                border: `1px solid ${isGold ? 'rgba(255,255,255,0.06)' : hasPosition ? `${accentColor}25` : 'rgba(255,255,255,0.08)'}`,
+                color: isGold ? 'rgba(148,163,184,0.4)' : hasPosition ? accentColor : 'rgba(148,163,184,0.7)',
+                flexShrink: 0,
+              }}>
+                {isGold ? 'Coming Soon' : hasPosition ? 'Active' : 'Available'}
+              </div>
+            </div>
           </div>
-        </div>
 
         {/* ── Metrics row ── */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 0, borderRadius: 14, overflow: 'hidden', border: '1px solid rgba(255,255,255,0.06)' }}>
@@ -188,6 +206,19 @@ export default function VaultCard({ vault, position }: { vault: any; position?: 
           vault={vault}
           accentColor={accentColor}
           onClose={() => setModalOpen(false)}
+        />
+      )}
+
+      {milestoneOpen && vaultId && (
+        <MilestoneModal
+          vaultId={vaultId}
+          vault={vault}
+          accentColor={accentColor}
+          onClose={() => setMilestoneOpen(false)}
+          onSuccess={() => {
+            setMilestoneOpen(false)
+            // If the user set a goal, maybe we should show a notification or just rely on the dashboard
+          }}
         />
       )}
 

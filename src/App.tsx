@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import VaultsPage from './pages/VaultsPage'
 import DashboardPage from './pages/DashboardPage'
 import SIPPage from './pages/SIPPage'
+import PortfoliosPage from './pages/PortfoliosPage'
 
 export default function App() {
   return (
@@ -10,6 +11,7 @@ export default function App() {
       <Layout>
         <Routes>
           <Route path="/" element={<VaultsPage />} />
+          <Route path="/portfolios" element={<PortfoliosPage />} />
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/sip" element={<SIPPage />} />
         </Routes>

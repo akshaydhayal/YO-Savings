@@ -1,11 +1,14 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
+import confetti from 'canvas-confetti'
+import MilestoneModal from '../components/MilestoneModal'
+import YieldCalculator from '../components/YieldCalculator'
 import { Link } from 'react-router-dom'
 import { useAccount, useChainId } from 'wagmi'
 import { ConnectButton } from '@rainbow-me/rainbowkit'
 import { useUserPositions, usePrices } from '@yo-protocol/react'
 import { VAULTS } from '@yo-protocol/core'
-import { ArrowUpRight, TrendingUp, Zap, BarChart3, Wallet, PieChart, Activity } from 'lucide-react'
+import { ArrowUpRight, TrendingUp, Zap, BarChart3, Wallet, PieChart, Activity, Target } from 'lucide-react'
 import { formatUnits } from 'viem'
 
 const F    = "'Outfit', system-ui, sans-serif"
@@ -138,9 +141,71 @@ export default function DashboardPage() {
 
         return { vaultId, name, symbol, shareSymbol, decimals, accent, tokenAmount, tokenNum, usdValue, price, oraclePrice, spark, vaultAddr, yield1d, yield30d }
       })
-      .filter((e: any) => e.vaultId !== '')   // only if we successfully resolved
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [positions, prices, chainId])
+
+  const [milestones, setMilestones] = useState<any[]>([])
+  const [activeMilestoneVault, setActiveMilestoneVault] = useState<any>(null)
+
+  // Enriched list INCLUDING vaults with milestones but no position
+  const enrichedWithGoals = useMemo(() => {
+    const list = [...enriched]
+    
+    // Add placeholders for vaults that have milestones but no positions
+    milestones.forEach(m => {
+      if (!list.find(p => p.vaultId === m.vaultId)) {
+        const vaultConfig = VAULTS[m.vaultId as keyof typeof VAULTS]
+        if (vaultConfig) {
+          list.push({
+            vaultId: m.vaultId,
+            name: m.vaultId,
+            symbol: vaultConfig.underlying?.symbol ?? '?',
+            shareSymbol: m.vaultId,
+            decimals: vaultConfig.underlying?.decimals ?? 6,
+            accent: VAULT_COLORS[m.vaultId] ?? '#d6ff34',
+            tokenAmount: '0',
+            tokenNum: 0,
+            usdValue: 0,
+            price: 0,
+            oraclePrice: 0,
+            spark: [0,0,0,0,0,0,0],
+            vaultAddr: vaultConfig.address,
+            yield1d: 0,
+            yield30d: 0
+          })
+        }
+      }
+    })
+    return list
+  }, [enriched, milestones])
+
+  const fetchMilestones = async () => {
+    if (!address) return
+    try {
+      const res = await fetch(`/api/milestone?userAddress=${address}`)
+      const data = await res.json()
+      if (data.success) {
+        setMilestones(data.data)
+      }
+    } catch (e) {
+      console.error(e)
+    }
+  }
+
+  useEffect(() => {
+    fetchMilestones()
+  }, [address])
+
+  useEffect(() => {
+    if (enriched.length === 0 || milestones.length === 0) return
+    enriched.forEach(p => {
+      const ms = milestones.find(m => m.vaultId === p.vaultId)
+      if (ms && p.tokenNum >= ms.targetAmount && !(window as any)[`confetti_fired_${ms._id}`]) {
+        confetti({ particleCount: 150, spread: 70, origin: { y: 0.6 }, zIndex: 1000 })
+        ;(window as any)[`confetti_fired_${ms._id}`] = true
+      }
+    })
+  }, [enriched, milestones])
 
   const totalUsd = enriched.reduce((s: number, p: any) => s + p.usdValue, 0)
   const topPos   = enriched.reduce((best: any, p: any) => (!best || p.usdValue > best.usdValue) ? p : best, null)
@@ -316,6 +381,11 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/* ── Yield Calculator ── */}
+      <div style={{ marginBottom: 20 }}>
+        <YieldCalculator avgApy={enriched.length > 0 ? (enriched.reduce((s: number, p: any) => s + p.yield30d, 0) / enriched.length) : 10.5} />
+      </div>
+
       {/* ── Positions Table ── */}
       <div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: 16 }}>
@@ -329,11 +399,11 @@ export default function DashboardPage() {
         <div style={{ ...CARD, overflow: 'hidden' }}>
           {isLoading ? (
             <div style={{ padding: '0 20px' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 100px', padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
-                {['Vault', 'Token Balance', 'USD Value', 'Token Price', 'Status'].map(h => <span key={h} style={LABEL}>{h}</span>)}
+              <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 120px', padding: '10px 0', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
+                {['Vault', 'Token Balance', 'USD Value', 'Token Price', 'Goal / Status'].map(h => <span key={h} style={LABEL}>{h}</span>)}
               </div>
               {Array(3).fill(0).map((_, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 100px', padding: '16px 0', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', gap: 8 }}>
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 1.2fr 1.2fr 1.2fr 120px', padding: '16px 0', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.04)', gap: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                     <Skeleton width={38} height={38} borderRadius={11} />
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -364,15 +434,15 @@ export default function DashboardPage() {
           ) : (
             <div>
               {/* Column headers */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 100px', padding: '10px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
-                {['Vault', 'Token Balance', 'USD Value', 'Price', 'APY', 'Status'].map(h => (
+              <div style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 120px', padding: '10px 20px', borderBottom: '1px solid rgba(255,255,255,0.05)', gap: 8 }}>
+                {['Vault', 'Token Balance', 'USD Value', 'Price', 'APY', 'Goal / Status'].map(h => (
                   <span key={h} style={LABEL}>{h}</span>
                 ))}
               </div>
-              {enriched.map((p: any, i: number) => (
+              {enrichedWithGoals.map((p: any, i: number) => (
                 <motion.div key={i}
                   initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.3 + i * 0.08 }}
-                  style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 100px', padding: '16px 20px', alignItems: 'center', borderBottom: i === enriched.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.04)', gap: 8, transition: 'background 0.18s', cursor: 'default' }}
+                  style={{ display: 'grid', gridTemplateColumns: '1.8fr 1fr 1fr 1fr 0.8fr 120px', padding: '16px 20px', alignItems: 'center', borderBottom: i === enriched.length - 1 ? 'none' : '1px solid rgba(255,255,255,0.04)', gap: 8, transition: 'background 0.18s', cursor: 'default' }}
                   onMouseEnter={e => (e.currentTarget as HTMLDivElement).style.background = 'rgba(255,255,255,0.02)'}
                   onMouseLeave={e => (e.currentTarget as HTMLDivElement).style.background = 'transparent'}
                 >
@@ -411,13 +481,39 @@ export default function DashboardPage() {
                     </p>
                     <p style={{ fontFamily: F, fontSize: 9, color: 'rgba(148,163,184,0.5)', margin: '2px 0 0', textTransform: 'uppercase' }}>30D Avg</p>
                   </div>
-                  {/* Sparkline */}
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 5 }}>
-                    <MiniBar values={p.spark} color={p.accent} />
-                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 7px', borderRadius: 100, background: 'rgba(214,255,52,0.06)', border: '1px solid rgba(214,255,52,0.12)' }}>
-                      <Zap size={7} color="#d6ff34" />
-                      <span style={{ fontFamily: F, fontSize: 8, fontWeight: 700, color: '#d6ff34', textTransform: 'uppercase', letterSpacing: '0.1em' }}>Live</span>
-                    </div>
+                  {/* Status / Goal */}
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, width: '100%' }}>
+                    {(() => {
+                      const ms = milestones.find(m => m.vaultId === p.vaultId)
+                      if (ms) {
+                        const progress = Math.min((p.tokenNum / ms.targetAmount) * 100, 100)
+                        return (
+                          <div style={{ width: '100%', textAlign: 'right' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 5 }}>
+                              <span style={{ fontSize: 9, color: 'rgba(148,163,184,0.6)', fontWeight: 600, letterSpacing: '0.1em' }}>{ms.name.toUpperCase()}</span>
+                              <span style={{ fontSize: 9, color: progress >= 100 ? '#10b981' : '#fff', fontWeight: 600 }}>{Math.floor(progress)}%</span>
+                            </div>
+                            <div style={{ width: '100%', height: 5, background: 'rgba(255,255,255,0.06)', borderRadius: 3, overflow: 'hidden' }}>
+                              <div style={{ height: '100%', background: progress >= 100 ? '#10b981' : p.accent, width: `${progress}%`, transition: 'width 0.5s ease-out' }} />
+                            </div>
+                            <div style={{ fontSize: 8, color: 'rgba(148,163,184,0.5)', marginTop: 4, letterSpacing: '0.02em', fontFamily: FNUM }}>
+                              {parseFloat(p.tokenAmount).toPrecision(4)} / {ms.targetAmount}
+                            </div>
+                          </div>
+                        )
+                      }
+                      return (
+                        <>
+                          <MiniBar values={p.spark} color={p.accent} />
+                          <button onClick={() => setActiveMilestoneVault(p)} style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, marginTop: 2 }}>
+                            <div style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 8px', borderRadius: 100, background: `${p.accent}12`, border: `1px solid ${p.accent}30`, transition: 'all 0.2s' }}>
+                              <Target size={9} color={p.accent} />
+                              <span style={{ fontFamily: F, fontSize: 8, fontWeight: 700, color: p.accent, textTransform: 'uppercase', letterSpacing: '0.1em' }}>Set Goal</span>
+                            </div>
+                          </button>
+                        </>
+                      )
+                    })()}
                   </div>
                 </motion.div>
               ))}
@@ -425,6 +521,16 @@ export default function DashboardPage() {
           )}
         </div>
       </div>
+
+      {activeMilestoneVault && (
+        <MilestoneModal
+          vaultId={activeMilestoneVault.vaultId}
+          vault={{ name: activeMilestoneVault.name, asset: { symbol: activeMilestoneVault.symbol } }}
+          accentColor={activeMilestoneVault.accent}
+          onClose={() => setActiveMilestoneVault(null)}
+          onSuccess={fetchMilestones}
+        />
+      )}
 
       <style>{`
         @media (max-width: 900px) { .dash-metric-grid { grid-template-columns: repeat(2, 1fr) !important; } .dash-charts-grid { grid-template-columns: 1fr !important; } }
